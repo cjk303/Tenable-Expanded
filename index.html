@@ -14,7 +14,7 @@ input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5p
 .btn-epiq:hover {background:#005bb5;}
 #logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:200px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
 h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
-.logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
+.logo-container {display:flex; justify-content:space-between; align-items:center; gap:2rem; margin-bottom:1rem;}
 .logo-container img {max-height:60px; object-fit:contain;}
 table {margin-top:20px;}
 </style>
@@ -24,7 +24,11 @@ table {margin-top:20px;}
 <div class="card">
   <div class="logo-container">
     <img src="{{ url_for('static', filename='epiq-vector-logo.png') }}" alt="Epiq Logo">
-    <div>Logged in as: {{ current_user.id }} | <a href="{{ url_for('logout') }}">Logout</a></div>
+    <div>
+      Logged in as: {{ current_user.id }} |
+      <a href="{{ url_for('logout') }}">Logout</a> |
+      <a href="{{ url_for('history') }}">History</a>
+    </div>
   </div>
 
   <h2>Nessus Agent Deployment</h2>
@@ -139,6 +143,22 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
   resultsBody.innerHTML = "";
 
   const formData = new FormData(this);
+  const hostStates = {}; // track per-host state
+
+  function updateTable(host, removed, installed, status){
+      hostStates[host] = {removed, installed, status};
+      resultsBody.innerHTML = "";
+      for(const h in hostStates){
+          const tr = document.createElement("tr");
+          const s = hostStates[h];
+          tr.innerHTML = `<td>${h}</td>
+                          <td>${s.removed}</td>
+                          <td>${s.installed}</td>
+                          <td>${s.status}</td>`;
+          resultsBody.appendChild(tr);
+      }
+  }
+
   fetch("/", { method:"POST", body:formData })
   .then(response=>{
     const reader = response.body.getReader();
@@ -152,15 +172,12 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
             const content = line.replace("data:","");
             logBox.innerText += content + "\n";
             logBox.scrollTop = logBox.scrollHeight;
-            // try parse JSON
+            // parse JSON for results
             try {
               const obj = JSON.parse(content);
-              const tr = document.createElement("tr");
-              tr.innerHTML = `<td>${obj.host}</td>
-                              <td>${obj.removed}</td>
-                              <td>${obj.installed}</td>
-                              <td>${obj.status}</td>`;
-              resultsBody.appendChild(tr);
+              if(obj.host){
+                updateTable(obj.host, obj.removed, obj.installed, obj.status);
+              }
             } catch(e){}
           }
         });
