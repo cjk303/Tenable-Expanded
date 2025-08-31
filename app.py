@@ -109,13 +109,16 @@ def index():
         if not username or not password or not activation_key:
             return "Error: username, password, and activation key are required.", 400
 
-        hosts = request.form.get("hosts", "").splitlines()
+        hosts = [h.strip() for h in request.form.get("hosts", "").splitlines() if h.strip()]
         groups = request.form.get("groups", "")
         mode = request.form.get("mode", "cloud")
         manager_host = request.form.get("manager_host", "")
         manager_port = request.form.get("manager_port", "8834")
         escalate_method = request.form.get("escalate_method", "sudo")
         remove_rapid7 = request.form.get("remove_rapid7", "false")
+
+        if not hosts:
+            return "Error: At least one host is required.", 400
 
         # ---- Inventory ----
         inventory_content = "[agents]\n" + "\n".join(hosts) + "\n\n"
@@ -137,42 +140,50 @@ def index():
 
         # ---- Playbook path & Ansible executable ----
         playbook_path = os.path.join(basedir, "deploy_nessus_agent.yml")
-        ansible_cmd = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
-        cmd = [ansible_cmd, "-i", tmp_inventory.name, playbook_path, "-v", "-o"]
+        if not os.path.isfile(playbook_path):
+            return f"Playbook not found at {playbook_path}", 500
 
-        user_id = current_user.id  # capture early for generator
+        ansible_cmd = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
+        if not shutil.which("ansible-playbook"):
+            return "ansible-playbook not found in PATH", 500
+
+        cmd = [ansible_cmd, "-i", tmp_inventory.name, playbook_path, "-v"]
+
+        user_id = current_user.id
 
         def stream_logs():
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            results = {h: {"removed_rapid7": False, "installed_tenable": False, "status": "Pending", "details": ""} for h in hosts}
+            results = {h: {"removed_rapid7": False, "installed_tenable": False, "status": "Pending"} for h in hosts}
             logs = []
 
             for line in iter(process.stdout.readline, ''):
                 logs.append(line)
                 yield f"data:{line}\n\n"
 
-                for h in hosts:
-                    if h in line:
-                        lline = line.lower()
-                        if "rapid7" in lline:
-                            results[h]["removed_rapid7"] = True
-                        if "tenable" in lline:
-                            results[h]["installed_tenable"] = True
-                        if "failed" in lline:
-                            results[h]["status"] = "Failed"
-                            results[h]["details"] += line.strip() + " "
-                        elif "success" in lline and results[h]["status"] != "Failed":
-                            results[h]["status"] = "Success"
-
-                        # Send structured JSON per host
-                        yield f"data:{json.dumps({'host':h,'removed':results[h]['removed_rapid7'],'installed':results[h]['installed_tenable'],'status':results[h]['status']})}\n\n"
+                # Try to parse JSON-friendly lines
+                if ":" in line:
+                    for h in hosts:
+                        if h in line:
+                            lline = line.lower()
+                            if "rapid7 removed" in lline:
+                                results[h]["removed_rapid7"] = True
+                            if "tenable installed" in lline:
+                                results[h]["installed_tenable"] = True
+                            if "failed" in lline:
+                                results[h]["status"] = "Failed"
+                            elif "success" in lline or "tenable installed" in lline:
+                                if results[h]["status"] != "Failed":
+                                    results[h]["status"] = "Success"
+                            yield f"data:{json.dumps({'host':h,'removed':results[h]['removed_rapid7'],'installed':results[h]['installed_tenable'],'status':results[h]['status']})}\n\n"
 
             process.stdout.close()
             os.unlink(tmp_inventory.name)
 
-            run = Run(user=user_id, logs="".join(logs), results=results)
-            db.session.add(run)
-            db.session.commit()
+            # ---- Save results safely with app context ----
+            with app.app_context():
+                run = Run(user=user_id, logs="".join(logs), results=results)
+                db.session.add(run)
+                db.session.commit()
 
         return Response(stream_logs(), mimetype='text/event-stream')
 
