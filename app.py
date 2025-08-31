@@ -17,7 +17,6 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 instance_dir = os.path.join(basedir, "instance")
 os.makedirs(instance_dir, exist_ok=True)
 
-# SQLite absolute path
 db_file = os.path.join(instance_dir, "runs.db")
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -126,12 +125,12 @@ def index():
         inventory_content += f"ansible_user={username}\n"
         inventory_content += f"ansible_password={password}\n"
         inventory_content += f"ansible_become_password={sudo_password}\n"
+        inventory_content += f"ansible_become_method={escalate_method}\n"
         inventory_content += f"activation_key={activation_key}\n"
         inventory_content += f"groups={groups}\n"
         inventory_content += f"mode={mode}\n"
         inventory_content += f"manager_host={manager_host}\n"
         inventory_content += f"manager_port={manager_port}\n"
-        inventory_content += f"escalate_method={escalate_method}\n"
         inventory_content += f"remove_rapid7={remove_rapid7}\n"
 
         tmp_inventory = tempfile.NamedTemporaryFile(delete=False)
@@ -161,20 +160,19 @@ def index():
                 yield f"data:{line}\n\n"
 
                 # Try to parse JSON-friendly lines
-                if ":" in line:
-                    for h in hosts:
-                        if h in line:
-                            lline = line.lower()
-                            if "rapid7 removed" in lline:
-                                results[h]["removed_rapid7"] = True
-                            if "tenable installed" in lline:
-                                results[h]["installed_tenable"] = True
-                            if "failed" in lline:
-                                results[h]["status"] = "Failed"
-                            elif "success" in lline or "tenable installed" in lline:
-                                if results[h]["status"] != "Failed":
-                                    results[h]["status"] = "Success"
-                            yield f"data:{json.dumps({'host':h,'removed':results[h]['removed_rapid7'],'installed':results[h]['installed_tenable'],'status':results[h]['status']})}\n\n"
+                for h in hosts:
+                    lline = line.lower()
+                    if h in line:
+                        if "rapid7 removed" in lline:
+                            results[h]["removed_rapid7"] = True
+                        if "tenable installed" in lline:
+                            results[h]["installed_tenable"] = True
+                        if "failed" in lline:
+                            results[h]["status"] = "Failed"
+                        elif "success" in lline or "tenable installed" in lline:
+                            if results[h]["status"] != "Failed":
+                                results[h]["status"] = "Success"
+                        yield f"data:{json.dumps({'host':h,'removed':results[h]['removed_rapid7'],'installed':results[h]['installed_tenable'],'status':results[h]['status']})}\n\n"
 
             process.stdout.close()
             os.unlink(tmp_inventory.name)
