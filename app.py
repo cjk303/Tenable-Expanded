@@ -3,24 +3,32 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from models import db, Run
 import os, json, tempfile, subprocess, csv
 from cryptography.fernet import Fernet
-from ldap3 import Server, Connection, ALL, NTLM
+from ldap3 import Server, Connection, ALL, NTLM, SUBTREE
 
 # -------------------- Flask Setup --------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///instance/runs.db"
+
+# Ensure instance folder exists
+basedir = os.path.abspath(os.path.dirname(__file__))
+instance_dir = os.path.join(basedir, "instance")
+os.makedirs(instance_dir, exist_ok=True)
+
+# Absolute path to SQLite DB
+db_file = os.path.join(instance_dir, "runs.db")
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
 db.init_app(app)
 
 with app.app_context():
-    os.makedirs("instance", exist_ok=True)
     db.create_all()
 
+# -------------------- Login Manager --------------------
 login_manager = LoginManager()
 login_manager.login_view = "login"
 login_manager.init_app(app)
 
-# -------------------- LDAP User --------------------
 class LDAPUser(UserMixin):
     def __init__(self, username):
         self.id = username
@@ -28,6 +36,9 @@ class LDAPUser(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     return LDAPUser(user_id)
+
+# -------------------- AD Group Restrictions --------------------
+ALLOWED_AD_GROUPS = ["NessusDeployAdmins", "SecurityTeam"]
 
 # -------------------- Predefined Accounts --------------------
 PREDEFINED_FILE = "predefined_accounts.json"
@@ -57,12 +68,30 @@ def login():
         password = request.form.get("password").strip()
         server = Server("amer.epiqcorp.com", get_info=ALL)
         try:
-            conn = Connection(server, user=f"AMER\\{username}", password=password, authentication=NTLM, auto_bind=True)
+            conn = Connection(server, user=f"AMER\\{username}", password=password,
+                              authentication=NTLM, auto_bind=True)
+
+            # Search user DN and groups
+            conn.search(search_base='DC=amer,DC=epiqcorp,DC=com',
+                        search_filter=f'(sAMAccountName={username})',
+                        search_scope=SUBTREE,
+                        attributes=['memberOf'])
+            groups = []
+            if conn.entries:
+                member_of = conn.entries[0].memberOf
+                groups = [g.split(',')[0].replace('CN=','') for g in member_of]
+
+            if not any(g in ALLOWED_AD_GROUPS for g in groups):
+                error = "You are not authorized to access this application."
+                return render_template("login.html", error=error)
+
             user = LDAPUser(username)
             login_user(user)
             return redirect(url_for("index"))
-        except Exception as e:
+
+        except Exception:
             error = "Invalid username or password."
+
     return render_template("login.html", error=error)
 
 @app.route("/logout")
@@ -71,11 +100,10 @@ def logout():
     logout_user()
     return redirect(url_for("login"))
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET","POST"])
 @login_required
 def index():
     if request.method == "POST":
-        # -------------------- Credentials --------------------
         account_key = request.form.get("predefined_account")
         use_predefined = account_key and account_key in PREDEFINED_ACCOUNTS
 
@@ -94,7 +122,6 @@ def index():
         if not username or not password or not activation_key:
             return "Error: username, password, and activation key are required.", 400
 
-        # -------------------- Hosts & Inventory --------------------
         hosts = request.form.get("hosts", "").splitlines()
         groups = request.form.get("groups", "")
         mode = request.form.get("mode", "cloud")
@@ -103,6 +130,7 @@ def index():
         escalate_method = request.form.get("escalate_method", "sudo")
         remove_rapid7 = request.form.get("remove_rapid7", "false")
 
+        # Ephemeral Ansible Inventory
         inventory_content = "[agents]\n" + "\n".join(hosts) + "\n\n"
         inventory_content += "[agents:vars]\n"
         inventory_content += f"ansible_user={username}\n"
@@ -120,7 +148,6 @@ def index():
         tmp_inventory.write(inventory_content.encode())
         tmp_inventory.close()
 
-        # -------------------- Run Ansible --------------------
         cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml", "-v", "-o"]
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
@@ -129,7 +156,6 @@ def index():
 
         for line in process.stdout:
             logs.append(line)
-            # Simplified parsing; for production, parse JSON output properly
             for host in hosts:
                 if host in line:
                     if host not in results:
@@ -147,7 +173,6 @@ def index():
         process.wait()
         os.unlink(tmp_inventory.name)
 
-        # -------------------- Save to DB --------------------
         run = Run(user=current_user.id, logs="".join(logs), results=results)
         db.session.add(run)
         db.session.commit()
