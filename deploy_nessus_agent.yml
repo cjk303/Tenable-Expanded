@@ -8,9 +8,13 @@
 
   tasks:
 
-    - name: Print host starting deployment
-      debug:
-        msg: "{{ inventory_hostname }}: Starting deployment"
+    - name: Initialize host result
+      set_fact:
+        host_result:
+          host: "{{ inventory_hostname }}"
+          removed: "No"
+          installed: "No"
+          status: "Pending"
 
     # ---------------- Rapid7 Removal ----------------
     - name: Upload Rapid7 remover
@@ -19,26 +23,20 @@
         dest: /tmp/r7remover.sh
         mode: "0755"
       when: remove_rapid7 | bool
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Run Rapid7 remover
       shell: /bin/bash /tmp/r7remover.sh
       register: r7_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when: remove_rapid7 | bool
 
-    - name: Print Rapid7 removal status
-      debug:
-        msg: "{{ inventory_hostname }}: Rapid7 removed"
-      when:
-        - remove_rapid7 | bool
-        - r7_result is defined
-        - r7_result.rc == 0
+    - name: Set Rapid7 removed status
+      set_fact:
+        host_result: "{{ host_result | combine({'removed': 'Yes' if (r7_result is defined and r7_result.rc == 0) else 'No'}) }}"
 
-    # ---------------- Unsupported OS Check ----------------
+    # ---------------- Unsupported OS ----------------
     - name: Fail if OS unsupported
       fail:
         msg: "{{ inventory_hostname }}: Unsupported OS {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
@@ -48,7 +46,6 @@
     - name: Remove existing Nessus token if force_relink
       shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when: force_relink
 
@@ -61,27 +58,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 7 package
       command: yum -y localinstall /tmp/el7.rpm
+      args:
+        creates: /opt/nessus_agent/sbin/nessuscli
       register: rpm_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
 
-    - name: Print RHEL 7 install status
-      debug:
-        msg: "{{ inventory_hostname }}: Tenable installed"
-      when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "7"
-        - rpm_result is defined
-        - rpm_result.rc == 0
+    - name: Set RHEL 7 install status
+      set_fact:
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm_result is defined and rpm_result.rc==0) else 'No'}) }}"
 
     # ---------------- RHEL 8 ----------------
     - name: Upload RHEL 8 package
@@ -92,27 +84,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 8 package
       command: dnf -y localinstall /tmp/el8.rpm
+      args:
+        creates: /opt/nessus_agent/sbin/nessuscli
       register: rpm8_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
 
-    - name: Print RHEL 8 install status
-      debug:
-        msg: "{{ inventory_hostname }}: Tenable installed"
-      when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "8"
-        - rpm8_result is defined
-        - rpm8_result.rc == 0
+    - name: Set RHEL 8 install status
+      set_fact:
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm8_result is defined and rpm8_result.rc==0) else 'No'}) }}"
 
     # ---------------- RHEL 9 ----------------
     - name: Upload RHEL 9 package
@@ -123,27 +110,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 9 package
       command: dnf -y localinstall /tmp/el9.rpm
+      args:
+        creates: /opt/nessus_agent/sbin/nessuscli
       register: rpm9_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
 
-    - name: Print RHEL 9 install status
-      debug:
-        msg: "{{ inventory_hostname }}: Tenable installed"
-      when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "9"
-        - rpm9_result is defined
-        - rpm9_result.rc == 0
+    - name: Set RHEL 9 install status
+      set_fact:
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm9_result is defined and rpm9_result.rc==0) else 'No'}) }}"
 
     # ---------------- Debian / Ubuntu ----------------
     - name: Upload Debian/Ubuntu package
@@ -152,7 +134,6 @@
         dest: /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         mode: "0755"
       when: ansible_facts['distribution'] in ['Ubuntu','Debian']
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Install Debian/Ubuntu package
@@ -161,17 +142,12 @@
         state: present
       register: deb_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
       when: ansible_facts['distribution'] in ['Ubuntu','Debian']
 
-    - name: Print Debian/Ubuntu install status
-      debug:
-        msg: "{{ inventory_hostname }}: Tenable installed"
-      when:
-        - ansible_facts['distribution'] in ['Ubuntu','Debian']
-        - deb_result is defined
-        - deb_result.changed | default(false)
+    - name: Set Debian/Ubuntu install status
+      set_fact:
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (deb_result is defined and not deb_result.failed) else 'No'}) }}"
 
     # ---------------- Start & Link Nessus Agent ----------------
     - name: Enable and start Nessus Agent
@@ -179,7 +155,6 @@
         name: nessusagent
         state: started
         enabled: yes
-      become: yes
       become_method: "{{ escalate_method }}"
 
     - name: Link Nessus Agent
@@ -195,11 +170,13 @@
         creates: /opt/nessus_agent/.nessus/agent.key
       register: link_result
       ignore_errors: yes
-      become: yes
       become_method: "{{ escalate_method }}"
 
-    - name: Print linking result
+    - name: Set final link status
+      set_fact:
+        host_result: "{{ host_result | combine({'status': 'Success' if (link_result is defined and link_result.rc==0) else 'Failed'}) }}"
+
+    # ---------------- Send host result for SSE ----------------
+    - name: Output host deployment result
       debug:
-        msg: >
-          {{ inventory_hostname }}:
-          {% if link_result.rc == 0 %}Success{% else %}Failed{% endif %}
+        msg: "{{ host_result }}"
