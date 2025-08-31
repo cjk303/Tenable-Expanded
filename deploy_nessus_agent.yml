@@ -15,15 +15,19 @@
     # ---------------- Rapid7 Removal ----------------
     - name: Upload Rapid7 remover
       copy:
-        src: "r7remover.sh"
+        src: r7remover.sh
         dest: /tmp/r7remover.sh
         mode: "0755"
       when: remove_rapid7 | bool
+      become: yes
+      become_method: "{{ escalate_method }}"
 
-    - name: Run Rapid7 remover script
-      shell: "/bin/bash /tmp/r7remover.sh"
+    - name: Run Rapid7 remover
+      shell: /bin/bash /tmp/r7remover.sh
       register: r7_result
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
       when: remove_rapid7 | bool
 
     - name: Print Rapid7 removal status
@@ -44,22 +48,28 @@
     - name: Remove existing Nessus token if force_relink
       shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
       when: force_relink
 
     # ---------------- RHEL 7 ----------------
     - name: Upload RHEL 7 package
       copy:
-        src: "el7.rpm"
-        dest: "/tmp/el7.rpm"
+        src: el7.rpm
+        dest: /tmp/el7.rpm
         mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 7 package
       command: yum -y localinstall /tmp/el7.rpm
       register: rpm_result
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
@@ -76,17 +86,21 @@
     # ---------------- RHEL 8 ----------------
     - name: Upload RHEL 8 package
       copy:
-        src: "el8.rpm"
-        dest: "/tmp/el8.rpm"
+        src: el8.rpm
+        dest: /tmp/el8.rpm
         mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 8 package
       command: dnf -y localinstall /tmp/el8.rpm
       register: rpm8_result
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
@@ -103,17 +117,21 @@
     # ---------------- RHEL 9 ----------------
     - name: Upload RHEL 9 package
       copy:
-        src: "el9.rpm"
-        dest: "/tmp/el9.rpm"
+        src: el9.rpm
+        dest: /tmp/el9.rpm
         mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 9 package
       command: dnf -y localinstall /tmp/el9.rpm
       register: rpm9_result
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
@@ -130,24 +148,28 @@
     # ---------------- Debian / Ubuntu ----------------
     - name: Upload Debian/Ubuntu package
       copy:
-        src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
-        dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        src: NessusAgent-10.9.0-ubuntu1604_amd64.deb
+        dest: /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         mode: "0755"
-      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+      when: ansible_facts['distribution'] in ['Ubuntu','Debian']
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Install Debian/Ubuntu package
       apt:
-        deb: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        deb: /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         state: present
       register: deb_result
       ignore_errors: yes
-      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+      become: yes
+      become_method: "{{ escalate_method }}"
+      when: ansible_facts['distribution'] in ['Ubuntu','Debian']
 
     - name: Print Debian/Ubuntu install status
       debug:
         msg: "{{ inventory_hostname }}: Tenable installed"
       when:
-        - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+        - ansible_facts['distribution'] in ['Ubuntu','Debian']
         - deb_result is defined
         - deb_result.changed | default(false)
 
@@ -157,6 +179,8 @@
         name: nessusagent
         state: started
         enabled: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Link Nessus Agent
       shell: >
@@ -168,12 +192,14 @@
         --manager-host={{ manager_host }} --manager-port={{ manager_port }}
         {% endif %}
       args:
-        creates: "/opt/nessus_agent/.nessus/agent.key"
+        creates: /opt/nessus_agent/.nessus/agent.key
       register: link_result
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
 
     - name: Print linking result
       debug:
         msg: >
-          {{ inventory_hostname }}: 
+          {{ inventory_hostname }}:
           {% if link_result.rc == 0 %}Success{% else %}Failed{% endif %}
