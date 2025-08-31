@@ -3,7 +3,7 @@ import json
 import tempfile
 import subprocess
 import shutil
-from flask import Flask, render_template, request, redirect, url_for, Response, make_response
+from flask import Flask, render_template, request, redirect, url_for, Response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from cryptography.fernet import Fernet
 from ldap3 import Server, Connection, ALL
@@ -17,7 +17,7 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 instance_dir = os.path.join(basedir, "instance")
 os.makedirs(instance_dir, exist_ok=True)
 
-# SQLite DB absolute path
+# SQLite absolute path
 db_file = os.path.join(instance_dir, "runs.db")
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
