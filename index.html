@@ -12,21 +12,23 @@ input,textarea,select {background:#fff; border:1px solid #0C2340; color:#0C2340;
 input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5px #0072CE; outline:none;}
 .btn-epiq {background:#0072CE; color:#fff; font-weight:bold; border-radius:0.5rem; transition:0.2s;}
 .btn-epiq:hover {background:#005bb5;}
-#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:400px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
+#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:300px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
+#resultTable {margin-top:20px;}
 h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
 .logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
 .logo-container img {max-height:60px; object-fit:contain;}
-.summary-container {max-height:300px; overflow-y:auto; border:1px solid #0072CE; border-radius:0.5rem; padding:10px;}
-.status-success {color:green; font-weight:bold;}
-.status-failed {color:red; font-weight:bold;}
-.status-partial {color:orange; font-weight:bold;}
 </style>
 </head>
 <body>
 <div class="container py-5">
 <div class="card">
-  <div class="logo-container">
-    <img src="{{ url_for('static', filename='epiq-vector-logo.png') }}" alt="Epiq Logo">
+  <div class="d-flex justify-content-between mb-3">
+    <div class="logo-container">
+      <img src="{{ url_for('static', filename='epiqlogo.png') }}" alt="Epiq Logo">
+    </div>
+    <div>
+      <span>{{ current_user.id }}</span> | <a href="{{ url_for('logout') }}">Logout</a>
+    </div>
   </div>
 
   <h2>Nessus Agent Deployment</h2>
@@ -66,96 +68,14 @@ h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
       <textarea name="hosts" class="form-control" rows="4" required></textarea>
     </div>
 
-    <div class="mb-3">
-      <label class="form-label">Groups</label>
-      <input type="text" name="groups" class="form-control">
-    </div>
-
-    <div class="mb-3">
-      <label class="form-label">Mode</label>
-      <select name="mode" class="form-select">
-        <option value="cloud">Cloud</option>
-        <option value="manager">Manager</option>
-      </select>
-    </div>
-
-    <div class="row">
-      <div class="col-md-6 mb-3">
-        <label class="form-label">Manager Host</label>
-        <input type="text" name="manager_host" class="form-control">
-      </div>
-      <div class="col-md-6 mb-3">
-        <label class="form-label">Manager Port</label>
-        <input type="text" name="manager_port" value="8834" class="form-control">
-      </div>
-    </div>
-
-    <div class="mb-3">
-      <label class="form-label">Escalation Method</label>
-      <select name="escalate_method" class="form-select">
-        <option value="sudo">sudo</option>
-        <option value="dzdo">dzdo</option>
-      </select>
-    </div>
-
-    <div class="form-check mb-3">
-      <input class="form-check-input" type="checkbox" value="true" id="remove_rapid7" name="remove_rapid7">
-      <label class="form-check-label" for="remove_rapid7">
-        Remove Rapid7 before deployment
-      </label>
-    </div>
-
     <button type="submit" class="btn btn-epiq w-100">Deploy</button>
   </form>
 
   <div id="logBox"></div>
-
-  <!-- Summary Table -->
-  {% if results %}
-    <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
-      <h3>Summary</h3>
-      {% if run_id %}
-        <a href="{{ url_for('export_run_csv', run_id=run_id) }}" class="btn btn-success">Download CSV</a>
-      {% endif %}
-    </div>
-    <div class="summary-container">
-      <table class="table table-bordered table-striped table-hover">
-        <thead>
-          <tr>
-            <th>Hostname</th>
-            <th>Rapid7 Removed</th>
-            <th>Tenable Installed</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for host, data in results.items() %}
-          <tr data-bs-toggle="tooltip" data-bs-placement="top" title="{{ data.get('details', '') }}">
-            <td>{{ host }}</td>
-            <td>{% if data.removed_rapid7 %}✅{% else %}❌{% endif %}</td>
-            <td>{% if data.installed_tenable %}✅{% else %}❌{% endif %}</td>
-            <td>
-              {% if data.status.lower() == "success" %}
-                <span class="status-success">{{ data.status }}</span>
-              {% elif data.status.lower() == "failed" %}
-                <span class="status-failed">{{ data.status }}</span>
-              {% else %}
-                <span class="status-partial">{{ data.status }}</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% endif %}
-
 </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-const predefinedAccounts = {{ predefined_accounts|tojson }};
 const accountSelect = document.getElementById("predefined_account");
 const manualFields = document.getElementById("manual_credentials");
 
@@ -166,7 +86,8 @@ accountSelect.addEventListener("change", function(){
 document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
-  logBox.innerHTML="Starting deployment...\n";
+  logBox.innerHTML = "Starting deployment...\n";
+
   const formData = new FormData(this);
   fetch("/", { method:"POST", body:formData })
   .then(response=>{
@@ -187,12 +108,6 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
     }
     read();
   });
-});
-
-// Initialize Bootstrap tooltips
-const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-  return new bootstrap.Tooltip(tooltipTriggerEl);
 });
 </script>
 </body>
