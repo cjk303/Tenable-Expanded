@@ -8,10 +8,11 @@
 
   tasks:
 
-    - name: Print host starting
+    - name: Print host starting deployment
       debug:
         msg: "{{ inventory_hostname }}: Starting deployment"
 
+    # ---------------- Rapid7 Removal ----------------
     - name: Upload Rapid7 remover
       copy:
         src: "r7remover.sh"
@@ -24,27 +25,33 @@
       register: r7_result
       ignore_errors: yes
       when: remove_rapid7 | bool
+
     - name: Print Rapid7 removal status
       debug:
         msg: "{{ inventory_hostname }}: Rapid7 removed"
-      when: remove_rapid7 | bool and r7_result.rc == 0
+      when:
+        - remove_rapid7 | bool
+        - r7_result is defined
+        - r7_result.rc == 0
 
+    # ---------------- Unsupported OS Check ----------------
     - name: Fail if OS unsupported
       fail:
         msg: "{{ inventory_hostname }}: Unsupported OS {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
       when: ansible_facts['distribution'] not in ['RedHat', 'Ubuntu', 'Debian']
 
+    # ---------------- Remove existing Nessus token ----------------
     - name: Remove existing Nessus token if force_relink
       shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
       ignore_errors: yes
       when: force_relink
 
-    # ---------------- RHEL ----------------
+    # ---------------- RHEL 7 ----------------
     - name: Upload RHEL 7 package
       copy:
         src: "el7.rpm"
         dest: "/tmp/el7.rpm"
-        mode: '0755'
+        mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
@@ -56,17 +63,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
+
     - name: Print RHEL 7 install status
       debug:
         msg: "{{ inventory_hostname }}: Tenable installed"
-      when: rpm_result.rc == 0
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "7"
+        - rpm_result is defined
+        - rpm_result.rc == 0
 
     # ---------------- RHEL 8 ----------------
     - name: Upload RHEL 8 package
       copy:
         src: "el8.rpm"
         dest: "/tmp/el8.rpm"
-        mode: '0755'
+        mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
@@ -78,17 +90,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
+
     - name: Print RHEL 8 install status
       debug:
         msg: "{{ inventory_hostname }}: Tenable installed"
-      when: rpm8_result.rc == 0
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "8"
+        - rpm8_result is defined
+        - rpm8_result.rc == 0
 
     # ---------------- RHEL 9 ----------------
     - name: Upload RHEL 9 package
       copy:
         src: "el9.rpm"
         dest: "/tmp/el9.rpm"
-        mode: '0755'
+        mode: "0755"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
@@ -100,17 +117,22 @@
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
+
     - name: Print RHEL 9 install status
       debug:
         msg: "{{ inventory_hostname }}: Tenable installed"
-      when: rpm9_result.rc == 0
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "9"
+        - rpm9_result is defined
+        - rpm9_result.rc == 0
 
-    # ---------------- Debian/Ubuntu ----------------
+    # ---------------- Debian / Ubuntu ----------------
     - name: Upload Debian/Ubuntu package
       copy:
         src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
-        mode: '0755'
+        mode: "0755"
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
     - name: Install Debian/Ubuntu package
@@ -120,10 +142,14 @@
       register: deb_result
       ignore_errors: yes
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+
     - name: Print Debian/Ubuntu install status
       debug:
         msg: "{{ inventory_hostname }}: Tenable installed"
-      when: deb_result.rc == 0
+      when:
+        - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+        - deb_result is defined
+        - deb_result.rc == 0
 
     # ---------------- Start & Link Nessus Agent ----------------
     - name: Enable and start Nessus Agent
@@ -145,6 +171,7 @@
         creates: "/opt/nessus_agent/.nessus/agent.key"
       register: link_result
       ignore_errors: yes
+
     - name: Print linking result
       debug:
         msg: >
