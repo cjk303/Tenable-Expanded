@@ -17,18 +17,19 @@ input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5p
 h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
 .logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
 .logo-container img {max-height:60px; object-fit:contain;}
+.user-bar {display:flex; justify-content:flex-end; align-items:center; gap:1rem; margin-bottom:1rem; font-weight:bold;}
 </style>
 </head>
 <body>
 <div class="container py-5">
 <div class="card">
-  <div class="d-flex justify-content-between mb-3">
-    <div class="logo-container">
-      <img src="{{ url_for('static', filename='epiqlogo.png') }}" alt="Epiq Logo">
-    </div>
-    <div>
-      <span>{{ current_user.id }}</span> | <a href="{{ url_for('logout') }}">Logout</a>
-    </div>
+
+  <div class="logo-container">
+    <img src="{{ url_for('static', filename='epiqlogo.png') }}" alt="Epiq Logo">
+  </div>
+
+  <div class="user-bar">
+    <span>{{ current_user.id }}</span> | <a href="{{ url_for('logout') }}">Logout</a>
   </div>
 
   <h2>Nessus Agent Deployment</h2>
@@ -68,6 +69,30 @@ h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
       <textarea name="hosts" class="form-control" rows="4" required></textarea>
     </div>
 
+    <div class="row">
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Manager Host</label>
+        <input type="text" name="manager_host" class="form-control">
+      </div>
+      <div class="col-md-6 mb-3">
+        <label class="form-label">Manager Port</label>
+        <input type="text" name="manager_port" value="8834" class="form-control">
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Mode</label>
+      <select name="mode" class="form-select">
+        <option value="cloud">Cloud</option>
+        <option value="manager">Manager</option>
+      </select>
+    </div>
+
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" value="true" id="remove_rapid7" name="remove_rapid7">
+      <label class="form-check-label" for="remove_rapid7">Remove Rapid7 before deployment</label>
+    </div>
+
     <button type="submit" class="btn btn-epiq w-100">Deploy</button>
   </form>
 
@@ -83,7 +108,7 @@ h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
       </tr>
     </thead>
     <tbody id="resultBody">
-      <!-- Filled dynamically -->
+      <!-- Populated dynamically -->
     </tbody>
   </table>
 
@@ -106,9 +131,7 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
   resultBody.innerHTML = "";
 
   const hosts = document.querySelector("textarea[name=hosts]").value.split("\n").filter(h=>h);
-  const hostStatus = {};
   hosts.forEach(h => {
-    hostStatus[h] = {removed: false, installed: false, status: ""};
     const row = document.createElement("tr");
     row.id = `row-${h}`;
     row.innerHTML = `<td>${h}</td><td id="removed-${h}">No</td><td id="installed-${h}">No</td><td id="status-${h}">Pending</td>`;
@@ -120,6 +143,7 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
   .then(response=>{
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+
     function read(){
       reader.read().then(({done,value})=>{
         if(done) return;
@@ -127,20 +151,16 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
         text.split("\n").forEach(line=>{
           if(line.startsWith("data:")){
             const content = line.replace("data:","");
-            logBox.innerText += content + "\n";
-            logBox.scrollTop = logBox.scrollHeight;
-
-            hosts.forEach(h=>{
-              const lc = content.toLowerCase();
-              if(content.includes(h)){
-                if(lc.includes("rapid7")) document.getElementById(`removed-${h}`).innerText="Yes";
-                if(lc.includes("tenable")) document.getElementById(`installed-${h}`).innerText="Yes";
-                if(lc.includes("failed")) document.getElementById(`status-${h}`).innerText="Failed";
-                if(lc.includes("success") && document.getElementById(`status-${h}`).innerText!=="Failed") {
-                  document.getElementById(`status-${h}`).innerText="Success";
-                }
-              }
-            });
+            try {
+              const obj = JSON.parse(content);
+              const {host, removed, installed, status} = obj;
+              document.getElementById(`removed-${host}`).innerText = removed ? "Yes" : "No";
+              document.getElementById(`installed-${host}`).innerText = installed ? "Yes" : "No";
+              document.getElementById(`status-${host}`).innerText = status;
+            } catch {
+              logBox.innerText += content + "\n";
+              logBox.scrollTop = logBox.scrollHeight;
+            }
           }
         });
         read();
