@@ -2,32 +2,30 @@ import os
 import json
 import tempfile
 import subprocess
+import shutil
 from flask import Flask, render_template, request, redirect, url_for, Response, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from cryptography.fernet import Fernet
 from ldap3 import Server, Connection, ALL
 from models import db, Run
-import json
 
 # -------------------- Flask Setup --------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
-# Ensure instance folder exists
 basedir = os.path.abspath(os.path.dirname(__file__))
 instance_dir = os.path.join(basedir, "instance")
 os.makedirs(instance_dir, exist_ok=True)
 
-# Absolute path to SQLite DB
+# SQLite DB absolute path
 db_file = os.path.join(instance_dir, "runs.db")
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 db.init_app(app)
 with app.app_context():
     db.create_all()
 
-# -------------------- Login Manager --------------------
+# -------------------- Login --------------------
 login_manager = LoginManager()
 login_manager.login_view = "login"
 login_manager.init_app(app)
@@ -68,7 +66,6 @@ def login():
         password = request.form.get("password").strip()
         server = Server("amer.epiqcorp.com", get_info=ALL)
         try:
-            # SIMPLE bind using userPrincipalName
             conn = Connection(
                 server,
                 user=f"{username}@amer.epiqcorp.com",
@@ -76,15 +73,11 @@ def login():
                 authentication="SIMPLE",
                 auto_bind=True
             )
-
-            # Any AD member allowed
             user = LDAPUser(username)
             login_user(user)
             return redirect(url_for("index"))
-
         except Exception:
             error = "Invalid username or password."
-
     return render_template("login.html", error=error)
 
 @app.route("/logout")
@@ -97,6 +90,7 @@ def logout():
 @login_required
 def index():
     if request.method == "POST":
+        # ---- Credentials ----
         account_key = request.form.get("predefined_account")
         use_predefined = account_key and account_key in PREDEFINED_ACCOUNTS
 
@@ -123,7 +117,7 @@ def index():
         escalate_method = request.form.get("escalate_method", "sudo")
         remove_rapid7 = request.form.get("remove_rapid7", "false")
 
-        # Ephemeral Ansible Inventory
+        # ---- Inventory ----
         inventory_content = "[agents]\n" + "\n".join(hosts) + "\n\n"
         inventory_content += "[agents:vars]\n"
         inventory_content += f"ansible_user={username}\n"
@@ -141,78 +135,49 @@ def index():
         tmp_inventory.write(inventory_content.encode())
         tmp_inventory.close()
 
-        # Stream logs to browser using SSE
-        def stream_logs():
-            cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml", "-v", "-o"]
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # ---- Playbook path & Ansible executable ----
+        playbook_path = os.path.join(basedir, "deploy_nessus_agent.yml")
+        ansible_cmd = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
+        cmd = [ansible_cmd, "-i", tmp_inventory.name, playbook_path, "-v", "-o"]
 
-            results = {}
+        user_id = current_user.id  # capture early for generator
+
+        def stream_logs():
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            results = {h: {"removed_rapid7": False, "installed_tenable": False, "status": "Pending", "details": ""} for h in hosts}
             logs = []
 
             for line in iter(process.stdout.readline, ''):
                 logs.append(line)
                 yield f"data:{line}\n\n"
 
-                for host in hosts:
-                    if host in line:
-                        if host not in results:
-                            results[host] = {"removed_rapid7": False, "installed_tenable": False, "status":"unknown", "details": ""}
-                        if "rapid7" in line.lower():
-                            results[host]["removed_rapid7"] = True
-                        if "tenable" in line.lower():
-                            results[host]["installed_tenable"] = True
-                        if "FAILED" in line:
-                            results[host]["status"] = "failed"
-                            results[host]["details"] += line.strip() + " "
-                        elif "SUCCESS" in line and results[host]["status"] != "failed":
-                            results[host]["status"] = "success"
+                for h in hosts:
+                    if h in line:
+                        lline = line.lower()
+                        if "rapid7" in lline:
+                            results[h]["removed_rapid7"] = True
+                        if "tenable" in lline:
+                            results[h]["installed_tenable"] = True
+                        if "failed" in lline:
+                            results[h]["status"] = "Failed"
+                            results[h]["details"] += line.strip() + " "
+                        elif "success" in lline and results[h]["status"] != "Failed":
+                            results[h]["status"] = "Success"
+
+                        # Send structured JSON per host
+                        yield f"data:{json.dumps({'host':h,'removed':results[h]['removed_rapid7'],'installed':results[h]['installed_tenable'],'status':results[h]['status']})}\n\n"
 
             process.stdout.close()
             os.unlink(tmp_inventory.name)
 
-            # Save run to DB at the end
-            run = Run(user=current_user.id, logs="".join(logs), results=results)
+            run = Run(user=user_id, logs="".join(logs), results=results)
             db.session.add(run)
             db.session.commit()
 
         return Response(stream_logs(), mimetype='text/event-stream')
 
-    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
+    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS, current_user=current_user)
 
-# -------------------- History & CSV --------------------
-@app.route("/history")
-@login_required
-def history():
-    runs = Run.query.order_by(Run.timestamp.desc()).all()
-    return render_template("history.html", runs=runs)
-
-@app.route("/history/<int:run_id>")
-@login_required
-def view_run(run_id):
-    run = Run.query.get_or_404(run_id)
-    return render_template("view_run.html", run=run)
-
-@app.route("/history/<int:run_id>/csv")
-@login_required
-def export_run_csv(run_id):
-    run = Run.query.get_or_404(run_id)
-    output = [["Hostname", "Rapid7 Removed", "Tenable Installed", "Status"]]
-    for host, data in run.results.items():
-        output.append([
-            host,
-            "Yes" if data.get("removed_rapid7") else "No",
-            "Yes" if data.get("installed_tenable") else "No",
-            data.get("status", "")
-        ])
-    from io import StringIO
-    si = StringIO()
-    cw = csv.writer(si)
-    cw.writerows(output)
-    response = make_response(si.getvalue())
-    response.headers["Content-Disposition"] = f"attachment; filename=run_{run.id}_results.csv"
-    response.headers["Content-Type"] = "text/csv"
-    return response
-
-# -------------------- Main --------------------
+# -------------------- Run Server --------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8443, debug=True)
