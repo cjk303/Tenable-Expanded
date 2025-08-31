@@ -1,34 +1,59 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Deployment History</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <title>Deployment History</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    h1 { color: #002c5f; }
+    h2 { margin-top: 30px; color: #0055a5; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #002c5f; color: white; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    .ok { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+  </style>
 </head>
-<body class="p-4">
-<h2>Past Deployment Runs</h2>
-<table class="table table-striped table-hover">
-  <thead>
-    <tr>
-      <th>Run ID</th>
-      <th>User</th>
-      <th>Timestamp</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for run in runs %}
-    <tr>
-      <td>{{ run.id }}</td>
-      <td>{{ run.user }}</td>
-      <td>{{ run.timestamp }}</td>
-      <td>
-        <a href="{{ url_for('view_run', run_id=run.id) }}" class="btn btn-sm btn-primary">View</a>
-      </td>
-    </tr>
+<body>
+  <h1>Deployment History</h1>
+  <p>Logged in as: {{ session.username }} | <a href="{{ url_for('logout') }}">Logout</a> | <a href="{{ url_for('index') }}">Home</a></p>
+
+  {% if runs %}
+    {% set current_run = None %}
+    {% for row in runs %}
+      {% if row['run_id'] != current_run %}
+        {% if current_run %}
+            </tbody>
+            </table>
+        {% endif %}
+        <h2>Run ID: {{ row['run_id'] }}</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Hostname</th>
+              <th>Rapid7 Removed</th>
+              <th>Tenable Installed</th>
+              <th>Errors</th>
+            </tr>
+          </thead>
+          <tbody>
+        {% set current_run = row['run_id'] %}
+      {% endif %}
+      <tr>
+        <td>{{ row['hostname'] }}</td>
+        <td class="{{ 'ok' if row['rapid7_removed'] else 'fail' }}">
+          {{ 'Yes' if row['rapid7_removed'] else 'No' }}
+        </td>
+        <td class="{{ 'ok' if row['agent_installed'] else 'fail' }}">
+          {{ 'Yes' if row['agent_installed'] else 'No' }}
+        </td>
+        <td>{{ row['errors'] if row['errors'] else '-' }}</td>
+      </tr>
     {% endfor %}
-  </tbody>
-</table>
-<a href="{{ url_for('index') }}" class="btn btn-secondary mt-3">Back to Deployment</a>
+    </tbody>
+    </table>
+  {% else %}
+    <p>No deployment history found.</p>
+  {% endif %}
 </body>
 </html>
