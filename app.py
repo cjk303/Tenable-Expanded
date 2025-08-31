@@ -8,16 +8,12 @@ from flask import Flask, render_template, request, redirect, url_for, session, g
 app = Flask(__name__)
 app.secret_key = "super-secret-key"
 
-# Database path
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "deployments.db")
-
-# Ensure DB folder exists
 os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
 
 def get_db():
-    """Get a SQLite connection"""
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
@@ -26,14 +22,12 @@ def get_db():
 
 @app.teardown_appcontext
 def close_db(error):
-    """Close DB connection at end of request"""
     db = g.pop("db", None)
     if db is not None:
         db.close()
 
 
 def init_db():
-    """Create table if it doesn't exist"""
     db = get_db()
     db.execute(
         """
@@ -64,7 +58,7 @@ def login():
         username = request.form["username"]
         password = request.form["password"]
 
-        # For demo, we accept any password if not empty
+        # Demo auth (replace with real LDAP bind if needed)
         if username and password:
             session["username"] = username
             return redirect(url_for("index"))
@@ -80,7 +74,7 @@ def logout():
 
 
 # ----------------------
-# DEPLOY PAGE
+# DEPLOY
 # ----------------------
 @app.route("/")
 def index():
@@ -95,7 +89,7 @@ def deploy():
         return redirect(url_for("login"))
 
     escalate_method = request.form.get("escalate", "sudo")
-    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    run_id = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     cmd = [
         "ansible-playbook",
@@ -104,7 +98,6 @@ def deploy():
         "inventory.ini",
         "-e",
         f"escalate_method={escalate_method}",
-        "--json",
     ]
 
     try:
@@ -113,30 +106,30 @@ def deploy():
         flash(f"Error running Ansible: {e}", "danger")
         return redirect(url_for("index"))
 
-    # Parse JSON output
-    try:
-        parsed = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        flash("Could not parse Ansible output (JSON error).", "danger")
-        return redirect(url_for("index"))
-
     db = get_db()
+    errors_global = None
 
-    # Walk through hosts
-    for host, data in parsed.get("stats", {}).items():
-        rapid7_removed = 1 if data.get("changed", 0) > 0 else 0
-        agent_installed = 1 if data.get("ok", 0) > 0 else 0
-        errors = None
-        if data.get("failures", 0) > 0:
-            errors = "Some tasks failed"
+    # Parse output by scanning debug lines
+    for line in result.stdout.splitlines():
+        if '"hostname":' in line:
+            try:
+                data = json.loads(line.split("=>")[-1].strip())
+                hostname = data.get("hostname")
+                rapid7_removed = 1 if data.get("rapid7_removed") else 0
+                agent_installed = 1 if data.get("agent_installed") else 0
+                db.execute(
+                    "INSERT INTO deployment_results (run_id, hostname, rapid7_removed, agent_installed, errors) VALUES (?, ?, ?, ?, ?)",
+                    (run_id, hostname, rapid7_removed, agent_installed, None),
+                )
+            except Exception as e:
+                errors_global = f"JSON parse error: {e}"
 
-        db.execute(
-            "INSERT INTO deployment_results (run_id, hostname, rapid7_removed, agent_installed, errors) VALUES (?, ?, ?, ?, ?)",
-            (timestamp, host, rapid7_removed, agent_installed, errors),
-        )
+    if errors_global:
+        flash(errors_global, "danger")
+    else:
+        flash("Deployment finished and results saved.", "success")
+
     db.commit()
-
-    flash("Deployment completed and results saved.", "success")
     return redirect(url_for("history"))
 
 
