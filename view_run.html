@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>View Run {{ run.id }}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+.status-success {color:green; font-weight:bold;}
+.status-failed {color:red; font-weight:bold;}
+.status-partial {color:orange; font-weight:bold;}
+.summary-container {max-height:400px; overflow-y:auto; border:1px solid #0072CE; border-radius:0.5rem; padding:10px;}
+</style>
+</head>
+<body class="p-4">
+<h2>Run ID {{ run.id }} by {{ run.user }} at {{ run.timestamp }}</h2>
+
+<a href="{{ url_for('export_run_csv', run_id=run.id) }}" class="btn btn-success mb-3">Download CSV</a>
+
+<div class="summary-container">
+  <table class="table table-bordered table-striped table-hover">
+    <thead>
+      <tr>
+        <th>Hostname</th>
+        <th>Rapid7 Removed</th>
+        <th>Tenable Installed</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for host, data in run.results.items() %}
+      <tr data-bs-toggle="tooltip" data-bs-placement="top" title="{{ data.get('details','') }}">
+        <td>{{ host }}</td>
+        <td>{% if data.removed_rapid7 %}✅{% else %}❌{% endif %}</td>
+        <td>{% if data.installed_tenable %}✅{% else %}❌{% endif %}</td>
+        <td>
+          {% if data.status.lower() == "success" %}
+            <span class="status-success">{{ data.status }}</span>
+          {% elif data.status.lower() == "failed" %}
+            <span class="status-failed">{{ data.status }}</span>
+          {% else %}
+            <span class="status-partial">{{ data.status }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<a href="{{ url_for('history') }}" class="btn btn-secondary mt-3">Back to History</a>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+  return new bootstrap.Tooltip(tooltipTriggerEl);
+});
+</script>
+</body>
+</html>
