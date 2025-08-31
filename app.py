@@ -9,7 +9,7 @@ from ldap3 import Server, Connection, ALL, SIMPLE
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "supersecretkey")
 
-# SQLite database setup
+# ---------------- SQLite Setup ----------------
 DB_DIR = os.path.join(os.path.dirname(__file__), "instance")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "runs.db")
@@ -27,7 +27,7 @@ class Run(db.Model):
 with app.app_context():
     db.create_all()
 
-# ---------------- Predefined accounts ----------------
+# ---------------- Predefined Accounts ----------------
 PREDEFINED_FILE = "predefined_accounts.json"
 if not os.path.isfile(PREDEFINED_FILE):
     open(PREDEFINED_FILE, "w").write("{}")
@@ -157,14 +157,14 @@ def index():
 
         return Response(stream_logs(), mimetype='text/event-stream')
 
-    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
+    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS, session=session)
 
 # ---------------- History Page ----------------
 @app.route("/history")
 @login_required
 def history():
     runs = Run.query.order_by(Run.timestamp.desc()).all()
-    return render_template("history.html", runs=runs)
+    return render_template("history.html", runs=runs, session=session)
 
 # ---------------- Run Flask ----------------
 if __name__ == "__main__":
