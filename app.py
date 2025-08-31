@@ -1,9 +1,13 @@
+import os
+import json
+import tempfile
+import subprocess
+import csv
 from flask import Flask, render_template, request, redirect, url_for, Response, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from models import db, Run
-import os, json, tempfile, subprocess, csv
 from cryptography.fernet import Fernet
-from ldap3 import Server, Connection, ALL, NTLM, SUBTREE
+from ldap3 import Server, Connection, ALL
+from models import db, Run
 
 # -------------------- Flask Setup --------------------
 app = Flask(__name__)
@@ -20,7 +24,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db.init_app(app)
-
 with app.app_context():
     db.create_all()
 
@@ -36,9 +39,6 @@ class LDAPUser(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     return LDAPUser(user_id)
-
-# -------------------- AD Group Restrictions --------------------
-ALLOWED_AD_GROUPS = ["NessusDeployAdmins", "SecurityTeam"]
 
 # -------------------- Predefined Accounts --------------------
 PREDEFINED_FILE = "predefined_accounts.json"
@@ -60,7 +60,7 @@ def decrypt_password(enc_password):
     return cipher.decrypt(enc_password.encode()).decode()
 
 # -------------------- Routes --------------------
-@app.route("/login", methods=["GET","POST"])
+@app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
     if request.method == "POST":
@@ -68,23 +68,16 @@ def login():
         password = request.form.get("password").strip()
         server = Server("amer.epiqcorp.com", get_info=ALL)
         try:
-            conn = Connection(server, user=f"AMER\\{username}", password=password,
-                              authentication=NTLM, auto_bind=True)
+            # SIMPLE bind using userPrincipalName
+            conn = Connection(
+                server,
+                user=f"{username}@amer.epiqcorp.com",
+                password=password,
+                authentication="SIMPLE",
+                auto_bind=True
+            )
 
-            # Search user DN and groups
-            conn.search(search_base='DC=amer,DC=epiqcorp,DC=com',
-                        search_filter=f'(sAMAccountName={username})',
-                        search_scope=SUBTREE,
-                        attributes=['memberOf'])
-            groups = []
-            if conn.entries:
-                member_of = conn.entries[0].memberOf
-                groups = [g.split(',')[0].replace('CN=','') for g in member_of]
-
-            if not any(g in ALLOWED_AD_GROUPS for g in groups):
-                error = "You are not authorized to access this application."
-                return render_template("login.html", error=error)
-
+            # Successful login → allow any AD member
             user = LDAPUser(username)
             login_user(user)
             return redirect(url_for("index"))
