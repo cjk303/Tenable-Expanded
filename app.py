@@ -1,171 +1,159 @@
-from flask import Flask, render_template, request, Response, redirect, url_for, session
-from flask_sqlalchemy import SQLAlchemy
-from functools import wraps
-import os, json, tempfile, subprocess
-from cryptography.fernet import Fernet
+import os
+import sqlite3
+import subprocess
+import json
 import datetime
-from ldap3 import Server, Connection, ALL, SIMPLE
+from flask import Flask, render_template, request, redirect, url_for, session, g, flash
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "supersecretkey")
+app.secret_key = "super-secret-key"
 
-# ---------------- SQLite Setup ----------------
-DB_DIR = os.path.join(os.path.dirname(__file__), "instance")
-os.makedirs(DB_DIR, exist_ok=True)
-DB_PATH = os.path.join(DB_DIR, "runs.db")
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{DB_PATH}"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+# Database path
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DB_PATH = os.path.join(BASE_DIR, "data", "deployments.db")
 
-# ---------------- Models ----------------
-class Run(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user = db.Column(db.String(256))
-    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    results = db.Column(db.JSON)
+# Ensure DB folder exists
+os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
-with app.app_context():
-    db.create_all()
 
-# ---------------- Predefined Accounts ----------------
-PREDEFINED_FILE = "predefined_accounts.json"
-if not os.path.isfile(PREDEFINED_FILE):
-    open(PREDEFINED_FILE, "w").write("{}")
-with open(PREDEFINED_FILE) as f:
-    PREDEFINED_ACCOUNTS = json.load(f)
+def get_db():
+    """Get a SQLite connection"""
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+    return g.db
 
-KEY_FILE = "fernet.key"
-if not os.path.isfile(KEY_FILE):
-    raise FileNotFoundError(f"Fernet key file '{KEY_FILE}' not found. Generate it first.")
-with open(KEY_FILE, "r") as kf:
-    ENCRYPTION_KEY = kf.read().strip()
-cipher = Fernet(ENCRYPTION_KEY.encode())
 
-def decrypt_password(enc_password):
-    return cipher.decrypt(enc_password.encode()).decode()
+@app.teardown_appcontext
+def close_db(error):
+    """Close DB connection at end of request"""
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
 
-# ---------------- Authentication ----------------
-LDAP_SERVER = "ldap://amer.epiqcorp.com"
-LDAP_DOMAIN = "amer.epiqcorp.com"
 
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if 'username' not in session:
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated
+def init_db():
+    """Create table if it doesn't exist"""
+    db = get_db()
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deployment_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT,
+            hostname TEXT,
+            rapid7_removed INTEGER,
+            agent_installed INTEGER,
+            errors TEXT
+        )
+        """
+    )
+    db.commit()
 
+
+@app.before_request
+def before_request():
+    init_db()
+
+
+# ----------------------
+# AUTH
+# ----------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    error = ""
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        try:
-            server = Server(LDAP_SERVER, get_info=ALL)
-            conn = Connection(server, user=f"{username}@{LDAP_DOMAIN}", password=password, authentication=SIMPLE)
-            if conn.bind():
-                session['username'] = username
-                return redirect(url_for("index"))
-            else:
-                error = "Invalid username or password"
-        except Exception as e:
-            error = str(e)
-    return render_template("login.html", error=error)
+        username = request.form["username"]
+        password = request.form["password"]
+
+        # For demo, we accept any password if not empty
+        if username and password:
+            session["username"] = username
+            return redirect(url_for("index"))
+        else:
+            flash("Invalid username or password", "danger")
+    return render_template("login.html")
+
 
 @app.route("/logout")
 def logout():
-    session.pop("username", None)
+    session.clear()
     return redirect(url_for("login"))
 
-# ---------------- Main Deployment ----------------
-@app.route("/", methods=["GET", "POST"])
-@login_required
+
+# ----------------------
+# DEPLOY PAGE
+# ----------------------
+@app.route("/")
 def index():
-    if request.method == "POST":
-        account_key = request.form.get("predefined_account")
-        use_predefined = account_key and account_key in PREDEFINED_ACCOUNTS
+    if "username" not in session:
+        return redirect(url_for("login"))
+    return render_template("index.html")
 
-        if use_predefined:
-            account = PREDEFINED_ACCOUNTS[account_key]
-            username = account["username"]
-            password = decrypt_password(account["password"])
-            sudo_password = decrypt_password(account["sudo_password"])
-            activation_key = account["activation_key"]
-        else:
-            username = request.form.get("username", "").strip()
-            password = request.form.get("password", "").strip()
-            sudo_password = request.form.get("sudo_password", "").strip()
-            activation_key = request.form.get("activation_key", "").strip()
 
-        if not username or not password or not activation_key:
-            return "Error: username, password, and activation key are required.", 400
+@app.route("/deploy", methods=["POST"])
+def deploy():
+    if "username" not in session:
+        return redirect(url_for("login"))
 
-        hosts = request.form.get("hosts", "").splitlines()
-        groups = request.form.get("groups", "")
-        mode = request.form.get("mode", "cloud")
-        manager_host = request.form.get("manager_host", "")
-        manager_port = request.form.get("manager_port", "8834")
-        escalate_method = request.form.get("escalate_method", "sudo")
-        remove_rapid7 = request.form.get("remove_rapid7", "false") == "true"
+    escalate_method = request.form.get("escalate", "sudo")
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
-        # --- Ephemeral Ansible Inventory ---
-        inventory_content = "[agents]\n" + "\n".join(hosts) + "\n\n"
-        inventory_content += "[agents:vars]\n"
-        inventory_content += f"ansible_user={username}\n"
-        inventory_content += f"ansible_password={password}\n"
-        inventory_content += f"ansible_become_password={sudo_password}\n"
-        inventory_content += f"activation_key={activation_key}\n"
-        inventory_content += f"groups={groups}\n"
-        inventory_content += f"mode={mode}\n"
-        inventory_content += f"manager_host={manager_host}\n"
-        inventory_content += f"manager_port={manager_port}\n"
-        inventory_content += f"escalate_method={escalate_method}\n"
-        inventory_content += f"remove_rapid7={str(remove_rapid7).lower()}\n"
+    cmd = [
+        "ansible-playbook",
+        "deploy_nessus_agent.yml",
+        "-i",
+        "inventory.ini",
+        "-e",
+        f"escalate_method={escalate_method}",
+        "--json",
+    ]
 
-        tmp_inventory = tempfile.NamedTemporaryFile(delete=False)
-        tmp_inventory.write(inventory_content.encode())
-        tmp_inventory.close()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except Exception as e:
+        flash(f"Error running Ansible: {e}", "danger")
+        return redirect(url_for("index"))
 
-        results_dict = {}
+    # Parse JSON output
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        flash("Could not parse Ansible output (JSON error).", "danger")
+        return redirect(url_for("index"))
 
-        def stream_logs():
-            cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml"]
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    db = get_db()
 
-            for line in iter(process.stdout.readline, ""):
-                line = line.strip()
-                yield f"data:{line}\n\n"
+    # Walk through hosts
+    for host, data in parsed.get("stats", {}).items():
+        rapid7_removed = 1 if data.get("changed", 0) > 0 else 0
+        agent_installed = 1 if data.get("ok", 0) > 0 else 0
+        errors = None
+        if data.get("failures", 0) > 0:
+            errors = "Some tasks failed"
 
-                # Attempt to parse JSON host result
-                try:
-                    host_result = json.loads(line)
-                    results_dict[host_result['host']] = host_result
-                except:
-                    pass
+        db.execute(
+            "INSERT INTO deployment_results (run_id, hostname, rapid7_removed, agent_installed, errors) VALUES (?, ?, ?, ?, ?)",
+            (timestamp, host, rapid7_removed, agent_installed, errors),
+        )
+    db.commit()
 
-            process.stdout.close()
-            os.unlink(tmp_inventory.name)
+    flash("Deployment completed and results saved.", "success")
+    return redirect(url_for("history"))
 
-            # Save results to DB
-            if results_dict:
-                run = Run(user=session['username'], results=results_dict)
-                with app.app_context():
-                    db.session.add(run)
-                    db.session.commit()
 
-        return Response(stream_logs(), mimetype='text/event-stream')
-
-    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS, session=session)
-
-# ---------------- History Page ----------------
+# ----------------------
+# HISTORY
+# ----------------------
 @app.route("/history")
-@login_required
 def history():
-    runs = Run.query.order_by(Run.timestamp.desc()).all()
-    return render_template("history.html", runs=runs, session=session)
+    if "username" not in session:
+        return redirect(url_for("login"))
 
-# ---------------- Run Flask ----------------
+    db = get_db()
+    runs = db.execute(
+        "SELECT run_id, hostname, rapid7_removed, agent_installed, errors FROM deployment_results ORDER BY id DESC"
+    ).fetchall()
+    return render_template("history.html", runs=runs)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8443, debug=True)
