@@ -12,20 +12,23 @@ input,textarea,select {background:#fff; border:1px solid #0C2340; color:#0C2340;
 input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5px #0072CE; outline:none;}
 .btn-epiq {background:#0072CE; color:#fff; font-weight:bold; border-radius:0.5rem; transition:0.2s;}
 .btn-epiq:hover {background:#005bb5;}
-#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:200px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
+#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:400px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
 h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
-.logo-container {display:flex; justify-content:space-between; align-items:center; gap:2rem; margin-bottom:1rem;}
+.logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
 .logo-container img {max-height:60px; object-fit:contain;}
-table {margin-top:20px;}
+.header {display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;}
 </style>
 </head>
 <body>
 <div class="container py-5">
 <div class="card">
-  <div class="logo-container">
-    <img src="{{ url_for('static', filename='epiq-vector-logo.png') }}" alt="Epiq Logo">
+
+  <div class="header">
+    <div class="logo-container">
+      <img src="{{ url_for('static', filename='epiqlogo.png') }}" alt="Epiq Logo">
+    </div>
     <div>
-      Logged in as: {{ current_user.id }} |
+      Logged in as: {{ session.username }} |
       <a href="{{ url_for('logout') }}">Logout</a> |
       <a href="{{ url_for('history') }}">History</a>
     </div>
@@ -54,7 +57,7 @@ table {margin-top:20px;}
         <input type="password" name="password" class="form-control">
       </div>
       <div class="mb-3">
-        <label class="form-label">Sudo/Dzdo Password</label>
+        <label class="form-label">Sudo Password</label>
         <input type="password" name="sudo_password" class="form-control">
       </div>
       <div class="mb-3">
@@ -111,18 +114,6 @@ table {margin-top:20px;}
   </form>
 
   <div id="logBox"></div>
-
-  <table class="table table-striped table-bordered">
-    <thead>
-      <tr>
-        <th>Host</th>
-        <th>Rapid7 Removed</th>
-        <th>Tenable Installed</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody id="resultsBody"></tbody>
-  </table>
 </div>
 </div>
 
@@ -132,33 +123,18 @@ const accountSelect = document.getElementById("predefined_account");
 const manualFields = document.getElementById("manual_credentials");
 
 accountSelect.addEventListener("change", function(){
-    manualFields.style.display = this.value ? "none" : "block";
+    if (this.value) {
+        manualFields.style.display = "none";
+    } else {
+        manualFields.style.display = "block";
+    }
 });
 
 document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
-  const resultsBody = document.getElementById("resultsBody");
   logBox.innerHTML="Starting deployment...\n";
-  resultsBody.innerHTML = "";
-
   const formData = new FormData(this);
-  const hostStates = {}; // track per-host state
-
-  function updateTable(host, removed, installed, status){
-      hostStates[host] = {removed, installed, status};
-      resultsBody.innerHTML = "";
-      for(const h in hostStates){
-          const tr = document.createElement("tr");
-          const s = hostStates[h];
-          tr.innerHTML = `<td>${h}</td>
-                          <td>${s.removed}</td>
-                          <td>${s.installed}</td>
-                          <td>${s.status}</td>`;
-          resultsBody.appendChild(tr);
-      }
-  }
-
   fetch("/", { method:"POST", body:formData })
   .then(response=>{
     const reader = response.body.getReader();
@@ -169,16 +145,8 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
         const text = decoder.decode(value);
         text.split("\n").forEach(line=>{
           if(line.startsWith("data:")){
-            const content = line.replace("data:","");
-            logBox.innerText += content + "\n";
+            logBox.innerText += line.replace("data:","") + "\n";
             logBox.scrollTop = logBox.scrollHeight;
-            // parse JSON for results
-            try {
-              const obj = JSON.parse(content);
-              if(obj.host){
-                updateTable(obj.host, obj.removed, obj.installed, obj.status);
-              }
-            } catch(e){}
           }
         });
         read();
