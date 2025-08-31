@@ -149,7 +149,7 @@
       when:
         - ansible_facts['distribution'] in ['Ubuntu', 'Debian']
         - deb_result is defined
-        - deb_result.rc == 0
+        - deb_result.changed | default(false)
 
     # ---------------- Start & Link Nessus Agent ----------------
     - name: Enable and start Nessus Agent
