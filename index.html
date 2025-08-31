@@ -72,6 +72,21 @@ h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
   </form>
 
   <div id="logBox"></div>
+
+  <table class="table table-bordered" id="resultTable">
+    <thead class="table-primary">
+      <tr>
+        <th>Hostname</th>
+        <th>Rapid7 Removed</th>
+        <th>Tenable Installed</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="resultBody">
+      <!-- Filled dynamically -->
+    </tbody>
+  </table>
+
 </div>
 </div>
 
@@ -86,7 +101,19 @@ accountSelect.addEventListener("change", function(){
 document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
+  const resultBody = document.getElementById("resultBody");
   logBox.innerHTML = "Starting deployment...\n";
+  resultBody.innerHTML = "";
+
+  const hosts = document.querySelector("textarea[name=hosts]").value.split("\n").filter(h=>h);
+  const hostStatus = {};
+  hosts.forEach(h => {
+    hostStatus[h] = {removed: false, installed: false, status: ""};
+    const row = document.createElement("tr");
+    row.id = `row-${h}`;
+    row.innerHTML = `<td>${h}</td><td id="removed-${h}">No</td><td id="installed-${h}">No</td><td id="status-${h}">Pending</td>`;
+    resultBody.appendChild(row);
+  });
 
   const formData = new FormData(this);
   fetch("/", { method:"POST", body:formData })
@@ -99,8 +126,21 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
         const text = decoder.decode(value);
         text.split("\n").forEach(line=>{
           if(line.startsWith("data:")){
-            logBox.innerText += line.replace("data:","") + "\n";
+            const content = line.replace("data:","");
+            logBox.innerText += content + "\n";
             logBox.scrollTop = logBox.scrollHeight;
+
+            hosts.forEach(h=>{
+              const lc = content.toLowerCase();
+              if(content.includes(h)){
+                if(lc.includes("rapid7")) document.getElementById(`removed-${h}`).innerText="Yes";
+                if(lc.includes("tenable")) document.getElementById(`installed-${h}`).innerText="Yes";
+                if(lc.includes("failed")) document.getElementById(`status-${h}`).innerText="Failed";
+                if(lc.includes("success") && document.getElementById(`status-${h}`).innerText!=="Failed") {
+                  document.getElementById(`status-${h}`).innerText="Success";
+                }
+              }
+            });
           }
         });
         read();
