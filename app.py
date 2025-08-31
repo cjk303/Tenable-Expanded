@@ -2,12 +2,12 @@ import os
 import json
 import tempfile
 import subprocess
-import csv
 from flask import Flask, render_template, request, redirect, url_for, Response, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from cryptography.fernet import Fernet
 from ldap3 import Server, Connection, ALL
 from models import db, Run
+import json
 
 # -------------------- Flask Setup --------------------
 app = Flask(__name__)
@@ -77,7 +77,7 @@ def login():
                 auto_bind=True
             )
 
-            # Successful login → allow any AD member
+            # Any AD member allowed
             user = LDAPUser(username)
             login_user(user)
             return redirect(url_for("index"))
@@ -141,36 +141,41 @@ def index():
         tmp_inventory.write(inventory_content.encode())
         tmp_inventory.close()
 
-        cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml", "-v", "-o"]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # Stream logs to browser using SSE
+        def stream_logs():
+            cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml", "-v", "-o"]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-        results = {}
-        logs = []
+            results = {}
+            logs = []
 
-        for line in process.stdout:
-            logs.append(line)
-            for host in hosts:
-                if host in line:
-                    if host not in results:
-                        results[host] = {"removed_rapid7": False, "installed_tenable": False, "status":"unknown", "details": ""}
-                    if "rapid7" in line.lower():
-                        results[host]["removed_rapid7"] = True
-                    if "tenable" in line.lower():
-                        results[host]["installed_tenable"] = True
-                    if "FAILED" in line:
-                        results[host]["status"] = "failed"
-                        results[host]["details"] += line.strip() + " "
-                    elif "SUCCESS" in line and results[host]["status"] != "failed":
-                        results[host]["status"] = "success"
+            for line in iter(process.stdout.readline, ''):
+                logs.append(line)
+                yield f"data:{line}\n\n"
 
-        process.wait()
-        os.unlink(tmp_inventory.name)
+                for host in hosts:
+                    if host in line:
+                        if host not in results:
+                            results[host] = {"removed_rapid7": False, "installed_tenable": False, "status":"unknown", "details": ""}
+                        if "rapid7" in line.lower():
+                            results[host]["removed_rapid7"] = True
+                        if "tenable" in line.lower():
+                            results[host]["installed_tenable"] = True
+                        if "FAILED" in line:
+                            results[host]["status"] = "failed"
+                            results[host]["details"] += line.strip() + " "
+                        elif "SUCCESS" in line and results[host]["status"] != "failed":
+                            results[host]["status"] = "success"
 
-        run = Run(user=current_user.id, logs="".join(logs), results=results)
-        db.session.add(run)
-        db.session.commit()
+            process.stdout.close()
+            os.unlink(tmp_inventory.name)
 
-        return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS, results=results, logs=logs, run_id=run.id)
+            # Save run to DB at the end
+            run = Run(user=current_user.id, logs="".join(logs), results=results)
+            db.session.add(run)
+            db.session.commit()
+
+        return Response(stream_logs(), mimetype='text/event-stream')
 
     return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
 
