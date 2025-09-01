@@ -1,0 +1,125 @@
+# Nessus Tenable Agent installer & Rapid7 Removal - Web App
+
+A Flask + Ansible based web application for deploying and managing Nessus Agents across multiple Linux environments.  
+The application provides a simple **web interface** with **LDAP authentication** (amer.epiqcorp.com) and integrates with **Ansible playbooks** for automation.
+
+---
+
+## 🚀 Features
+
+- **Web Interface (Flask)**  
+  - Login via `username@amer.epiqcorp.com` (LDAP authentication). Use Delinea Creds
+  - Secure session management.  
+
+- **Predefined & Custom Accounts**  
+  - Load credentials from encrypted `predefined_accounts.json`.  
+  - Supports manual entry of usernames, passwords, sudo passwords, and activation keys.  
+
+- **Ansible Automation**  
+  - Ephemeral inventory files generated on the fly.  
+  - Deploys Nessus Agent packages for:
+    - RHEL 7 / 8 / 9  
+    - Ubuntu & Debian  
+  - Supports agent linking to **Tenable Cloud** or **On-Prem Manager**.  
+  - Optional Rapid7 uninstallation before Nessus install.  
+
+- **Streaming Logs**  
+  - Live Ansible output streamed back to the browser (via Server-Sent Events).  
+
+---
+
+## 📂 Project Structure
+
+```
+.
+├── tenpre.py                  # Main Flask application
+├── deploy_nessus_agent.yml    # Ansible playbook for deployment
+├── predefined_accounts.json   # Encrypted account storage (Fernet)
+├── fernet.key                 # Encryption key for account secrets
+├── requirements.txt           # Python dependencies
+├── static/
+│   └── epiqlogo.png           # Epiq logo for login page
+└── templates/
+    ├── index.html             # Main UI for entering deployment details
+    └── login.html             # Epiq Deploy login screen
+```
+
+---
+
+## ⚙️ Requirements
+
+- **Python 3.10+**  
+- **Ansible** installed on the host  
+- `fernet.key` generated beforehand:  
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > fernet.key
+  ```
+- Dependencies:
+  ```bash
+  pip install -r requirements.txt
+  ```
+Or install the dependencies globally with dnf/yum/apt
+
+---
+
+## ▶️ Running the App
+
+### Development Mode (Flask built-in server)
+```bash
+python3 tenpre.py
+```
+Accessible at: [http://localhost:8443](http://localhost:8443)
+
+### Production Mode (Gunicorn + systemd)
+```bash
+gunicorn -w 4 -b 0.0.0.0:8443 tenpre:app
+```
+
+Example systemd unit (`/etc/systemd/system/epiq-deploy.service`):
+
+```ini
+[Unit]
+Description=Epiq Deploy (tenpre.py)
+After=network.target
+
+[Service]
+User=epiquser
+Group=epiquser
+WorkingDirectory=/opt/epiq-deploy
+ExecStart=/usr/bin/gunicorn -w 4 -b 0.0.0.0:8443 tenpre:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable epiq-deploy
+sudo systemctl start epiq-deploy
+```
+
+---
+
+## 🔐 Authentication
+
+- Users log in with `username@amer.epiqcorp.com`  
+- Authenticated against **amer.epiqcorp.com LDAP**  
+- Once logged in, session grants access to deployment UI  
+
+---
+
+## 📦 CI/CD (GitLab)
+
+- **Linting**: Python (`flake8`, `bandit`) + Ansible (`ansible-lint`)  
+- **Deployment**: Auto-deploys to `/opt/epiq-deploy/` on target host when pushing to `main`  
+
+CI/CD pipeline defined in `.gitlab-ci.yml`.
+
+---
+
+## 📝 License
+
+Internal use only — © Epiq Systems
