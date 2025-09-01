@@ -1,0 +1,51 @@
+stages:
+  - lint
+  - test
+  - deploy
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+before_script:
+  - python3 -m venv venv
+  - source venv/bin/activate
+  - pip install --upgrade pip
+  - pip install -r requirements.txt
+
+# ---------------- Linting ----------------
+flake8:
+  stage: lint
+  image: python:3.10
+  script:
+    - pip install flake8 bandit
+    - flake8 tenpre.py
+    - bandit -r tenpre.py
+  only:
+    - merge_requests
+    - main
+
+# ---------------- Ansible Syntax Check ----------------
+ansible-lint:
+  stage: test
+  image: cytopia/ansible:latest
+  script:
+    - ansible-lint deploy_nessus_agent.yml
+  only:
+    - merge_requests
+    - main
+
+# ---------------- Deployment ----------------
+deploy:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client rsync
+  script:
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "systemctl stop epiq-deploy || true"
+    - rsync -avz --exclude '.git' --exclude '.cache' ./ $DEPLOY_USER@$DEPLOY_HOST:/opt/epiq-deploy/
+    - ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "systemctl daemon-reload && systemctl restart epiq-deploy"
+  only:
+    - main
