@@ -7,6 +7,13 @@
     ansible_remote_tmp: /tmp
     ansible_become_flags: "-S -tt"
 
+  pre_tasks:
+    - name: Gather minimal OS facts
+      setup:
+        gather_subset:
+          - '!all'
+          - 'min'
+
   tasks:
 
     # ---------------- Remove Rapid7 ----------------
