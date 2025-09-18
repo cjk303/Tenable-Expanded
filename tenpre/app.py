@@ -78,8 +78,6 @@ def index():
         return cipher.decrypt(enc_password.encode()).decode()
 
     if request.method == "POST":
-        app.logger.info("FORM DATA RECEIVED: %s", request.form.to_dict())
-
         account_key = request.form.get("predefined_account")
         use_predefined = bool(account_key and account_key in PREDEFINED_ACCOUNTS)
 
@@ -122,13 +120,15 @@ def index():
                         timeout=5
                     )
 
-                    # Determine escalation command
+                    # Safely escape password for shell
+                    escaped_password = shlex.quote(sudo_password)
+
                     if escalate_method == "sudo":
-                        cmd = f"echo {sudo_password} | sudo -S whoami"
+                        cmd = f"echo {escaped_password} | sudo -S whoami"
                     elif escalate_method == "dzdo":
-                        cmd = f"echo {sudo_password} | dzdo -S whoami"
+                        cmd = f"echo {escaped_password} | dzdo -S whoami"
                     else:
-                        cmd = "whoami"  # fallback
+                        cmd = "whoami"
 
                     stdin, stdout, stderr = client.exec_command(cmd)
                     result = stdout.read().decode().strip()
@@ -187,7 +187,6 @@ def index():
         def stream_logs():
             cmd = [
                 "ansible-playbook",
-                "-vvvv",
                 "-i", tmp_inventory.name,
                 "deploy_nessus_agent.yml"
             ]
