@@ -1,169 +1,206 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Nessus Agent Deployment</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-<style>
-body {background:#f8f9fa; color:#0C2340; font-family:Arial,sans-serif;}
-.card {background:#fff; border-radius:1rem; padding:2rem; box-shadow:0 4px 15px rgba(0,0,0,0.15);}
-.form-label {font-weight:bold; color:#0C2340;}
-input,textarea,select {background:#fff; border:1px solid #0C2340; color:#0C2340;}
-input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5px #0072CE; outline:none;}
-.btn-epiq {background:#0072CE; color:#fff; font-weight:bold; border-radius:0.5rem; transition:0.2s;}
-.btn-epiq:hover {background:#005bb5;}
-#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:400px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
-h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
-.logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
-.logo-container img {max-height:60px; object-fit:contain;}
-</style>
-</head>
-<body>
-<div class="container py-5">
-<div class="card">
-  <div class="logo-container">
-    <img src="{{ url_for('static', filename='epiq-vector-logo.png') }}" alt="Epiq Logo">
-  </div>
+#!/usr/bin/env python3
+from flask import (
+    Flask, render_template, request, Response,
+    redirect, url_for, session, flash
+)
+from ldap3 import Server, Connection, SIMPLE, ALL
+from functools import wraps
+import os
+import json
+import tempfile
+import subprocess
+from cryptography.fernet import Fernet
+import shlex
+import sys
 
-  <h2>Nessus Agent Deployment</h2>
+app = Flask(__name__)
 
-  <form id="deployForm" method="post">
-    <div class="mb-3">
-      <label class="form-label">Predefined Account</label>
-      <select name="predefined_account" id="predefined_account" class="form-select">
-        <option value="">-- Select an account --</option>
-        {% for key, account in predefined_accounts.items() %}
-        <option value="{{ key }}">{{ account.username }}</option>
-        {% endfor %}
-      </select>
-    </div>
+# 🔑 Secret key for sessions
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key")
 
-    <div id="manual_credentials">
-      <div class="mb-3">
-        <label class="form-label">Username</label>
-        <input type="text" name="username" class="form-control">
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Password</label>
-        <input type="password" name="password" class="form-control">
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Sudo Password</label>
-        <input type="password" name="sudo_password" class="form-control">
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Activation Key</label>
-        <input type="text" name="activation_key" class="form-control">
-      </div>
-    </div>
+LDAP_DOMAIN = "amer.epiqcorp.com"
 
-    <div class="mb-3">
-      <label class="form-label">Hosts (one per line)</label>
-      <textarea name="hosts" class="form-control" rows="4" required></textarea>
-    </div>
+# ------------------ LDAP AUTH ------------------ #
+def authenticate_user(username, password):
+    user_principal = f"{username}@{LDAP_DOMAIN}"
+    server = Server(LDAP_DOMAIN, get_info=ALL, port=636, use_ssl=True)
+    try:
+        conn = Connection(server, user=user_principal, password=password,
+                          authentication=SIMPLE, auto_bind=True)
+        conn.unbind()
+        return True
+    except Exception as e:
+        app.logger.warning(f"LDAP auth failed for {user_principal}: {e}")
+        return False
 
-    <div class="mb-3">
-      <label class="form-label">Groups</label>
-      <input type="text" name="groups" class="form-control">
-    </div>
+# ------------------ LOGIN REQUIRED ------------------ #
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "username" not in session:
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
 
-    <div class="mb-3">
-      <label class="form-label">Mode</label>
-      <select name="mode" class="form-select">
-        <option value="cloud">Cloud</option>
-        <option value="manager">Manager</option>
-      </select>
-    </div>
+# ------------------ ROUTES ------------------ #
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if authenticate_user(username, password):
+            session["username"] = f"{username}@{LDAP_DOMAIN}"
+            flash("Login successful!", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("Invalid username or password", "danger")
+    return render_template("login.html")
 
-    <div class="row">
-      <div class="col-md-6 mb-3">
-        <label class="form-label">Manager Host</label>
-        <input type="text" name="manager_host" class="form-control">
-      </div>
-      <div class="col-md-6 mb-3">
-        <label class="form-label">Manager Port</label>
-        <input type="text" name="manager_port" value="8834" class="form-control">
-      </div>
-    </div>
+@app.route("/logout")
+def logout():
+    session.pop("username", None)
+    flash("Logged out successfully.", "info")
+    return redirect(url_for("login"))
 
-    <div class="mb-3">
-      <label class="form-label">Escalation Method</label>
-      <select name="escalate_method" class="form-select">
-        <option value="sudo">sudo</option>
-        <option value="dzdo">dzdo</option>
-      </select>
-    </div>
+@app.route("/", methods=["GET", "POST"])
+@login_required
+def index():
+    PREDEFINED_FILE = "predefined_accounts.json"
+    if not os.path.isfile(PREDEFINED_FILE):
+        open(PREDEFINED_FILE, "w").write("{}")
 
-    <div class="form-check mb-3">
-      <input class="form-check-input" type="checkbox" value="true" id="remove_rapid7" name="remove_rapid7">
-      <label class="form-check-label" for="remove_rapid7">
-        Remove Rapid7 before deployment
-      </label>
-    </div>
+    with open(PREDEFINED_FILE) as f:
+        try:
+            PREDEFINED_ACCOUNTS = json.load(f)
+        except Exception:
+            PREDEFINED_ACCOUNTS = {}
 
-    <button type="submit" class="btn btn-epiq w-100">Deploy</button>
-  </form>
+    KEY_FILE = "fernet.key"
+    if not os.path.isfile(KEY_FILE):
+        raise FileNotFoundError(f"Fernet key file '{KEY_FILE}' not found. Generate it first.")
 
-  <div id="logBox"></div>
-</div>
-</div>
+    with open(KEY_FILE, "r") as kf:
+        ENCRYPTION_KEY = kf.read().strip()
+    cipher = Fernet(ENCRYPTION_KEY.encode())
 
-<script>
-const predefinedAccounts = {{ predefined_accounts|tojson }};
-const accountSelect = document.getElementById("predefined_account");
-const manualFields = document.getElementById("manual_credentials");
+    def decrypt_password(enc_password):
+        return cipher.decrypt(enc_password.encode()).decode()
 
-accountSelect.addEventListener("change", function(){
-    manualFields.style.display = this.value ? "none" : "block";
-});
+    if request.method == "POST":
+        account_key = request.form.get("predefined_account")
+        use_predefined = bool(account_key and account_key in PREDEFINED_ACCOUNTS)
 
-document.getElementById("deployForm").addEventListener("submit", function(e){
-  e.preventDefault();
-  const logBox = document.getElementById("logBox");
-  logBox.innerHTML = "Starting deployment...\n";
+        if use_predefined:
+            account = PREDEFINED_ACCOUNTS[account_key]
+            username = account.get("username", "")
+            password = decrypt_password(account.get("password", ""))
+            sudo_password = decrypt_password(account.get("sudo_password", ""))
+            activation_key = account.get("activation_key", "")
+        else:
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "").strip()
+            sudo_password = request.form.get("sudo_password", "").strip()
+            activation_key = request.form.get("activation_key", "").strip()
 
-  const formData = new FormData(this);
-  fetch("/", { method: "POST", body: formData })
-    .then(response => {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        if not username or not password or not activation_key:
+            return "Error: username, password, and activation key are required.", 400
 
-      function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            logBox.innerText += "\n--- Stream closed ---\n";
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          let lines = buffer.split("\n");
-          buffer = lines.pop(); // keep incomplete line
+        raw_hosts = request.form.get("hosts", "")
+        hosts = [h.strip() for h in raw_hosts.splitlines() if h.strip()]
+        if not hosts:
+            return "Error: at least one host is required.", 400
 
-          lines.forEach(line => {
-            if (!line.trim()) return;
-            if (line.startsWith("data:")) {
-              const msg = line.slice(5).trim();
-              if (msg.startsWith("PLAYBOOK_EXIT=")) {
-                const rc = msg.split("=")[1];
-                logBox.innerText += `\n[Finished] Exit code: ${rc}\n`;
-              } else {
-                logBox.innerText += msg + "\n";
-              }
-            } else {
-              logBox.innerText += line + "\n";
-            }
-            logBox.scrollTop = logBox.scrollHeight;
-          });
+        groups = request.form.get("groups", "")
+        mode = request.form.get("mode", "cloud")
+        manager_host = request.form.get("manager_host", "")
+        manager_port = request.form.get("manager_port", "8834")
+        escalate_method = request.form.get("escalate_method", "sudo")
+        remove_rapid7_flag = bool(request.form.get("remove_rapid7"))
 
-          pump();
-        });
-      }
-      pump();
-    })
-    .catch(err => {
-      logBox.innerText += `\nERROR: ${err.message}\n`;
-    });
-});
-</script>
-</body>
-</html>
+        # ---------------- Inventory generation ---------------- #
+        def safe_value(v):
+            if v is None:
+                return "''"
+            return shlex.quote(str(v))
+
+        if escalate_method not in ["sudo", "dzdo", "su"]:
+            escalate_method = "sudo"
+
+        inventory_lines = []
+        inventory_lines.append("[agents]")
+        inventory_lines.extend(hosts)
+        inventory_lines.append("")
+        inventory_lines.append("[agents:vars]")
+        inventory_lines.append(f"ansible_user={safe_value(username)}")
+        inventory_lines.append(f"ansible_password={safe_value(password)}")
+        inventory_lines.append(f"ansible_become_password={safe_value(sudo_password)}")
+        inventory_lines.append(f"ansible_become_method={escalate_method}")
+        inventory_lines.append(f"activation_key={safe_value(activation_key)}")
+        inventory_lines.append(f"groups={safe_value(groups)}")
+        inventory_lines.append(f"mode={safe_value(mode)}")
+        inventory_lines.append(f"manager_host={safe_value(manager_host)}")
+        inventory_lines.append(f"manager_port={manager_port}")
+        inventory_lines.append(f"remove_rapid7={str(remove_rapid7_flag).lower()}")
+        inventory_lines.append("ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no'")
+        inventory_lines.append("ansible_become_flags='-tt'")
+
+        inventory_content = "\n".join(inventory_lines) + "\n"
+
+        # ---------------- Write temporary inventory ---------------- #
+        tmp_inventory = tempfile.NamedTemporaryFile(delete=False, mode="w")
+        try:
+            tmp_inventory.write(inventory_content)
+            tmp_inventory.close()
+            os.chmod(tmp_inventory.name, 0o600)
+        except Exception:
+            try:
+                os.unlink(tmp_inventory.name)
+            except Exception:
+                pass
+            raise
+
+        # ---------------- Log masked inventory ---------------- #
+        masked_inventory = []
+        for line in inventory_lines:
+            if "password" in line.lower():
+                masked_inventory.append(line.split("=")[0] + "=****")
+            else:
+                masked_inventory.append(line)
+        app.logger.info("Ansible inventory being used:\n%s", "\n".join(masked_inventory))
+
+        # ---------------- Stream logs to browser ---------------- #
+        def stream_logs():
+            cmd = [
+                "ansible-playbook",
+                "-vvvv",
+                "-i", tmp_inventory.name,
+                "deploy_nessus_agent.yml"
+            ]
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            try:
+                for line in iter(process.stdout.readline, ''):
+                    yield f"data:{line.rstrip()}\n\n"
+                    sys.stdout.flush()
+            finally:
+                process.stdout.close()
+                rc = process.wait()
+                yield f"data:PLAYBOOK_EXIT={rc}\n\n"
+                sys.stdout.flush()
+                try:
+                    os.unlink(tmp_inventory.name)
+                except Exception:
+                    app.logger.warning(f"Failed to remove temp inventory {tmp_inventory.name}")
+
+        return Response(stream_logs(), mimetype='text/event-stream')
+
+    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8443, debug=True)
