@@ -5,7 +5,6 @@
   vars:
     force_relink: true
     ansible_remote_tmp: /tmp
-    ansible_become_flags: "-S -tt"
 
   pre_tasks:
     - name: Gather minimal OS facts
@@ -17,132 +16,115 @@
   tasks:
 
     # ---------------- Remove Rapid7 ----------------
-    - name: Upload Rapid7 remover as normal user
+    - name: Upload Rapid7 remover
       copy:
         src: "r7remover.sh"
         dest: /tmp/r7remover.sh
         mode: "0755"
-      become: no
-      when: remove_rapid7 | bool
 
-    - name: Run Rapid7 remover script with dzdo/sudo
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /bin/bash /tmp/r7remover.sh
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /bin/bash /tmp/r7remover.sh
-        {% endif %}
+    - name: Run Rapid7 remover script
+      shell: /bin/bash /tmp/r7remover.sh
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when: remove_rapid7 | bool
 
     # ---------------- Remove existing Nessus token ----------------
     - name: Remove existing Nessus token if force_relink
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
-        {% endif %}
+      shell: /opt/nessus_agent/sbin/nessuscli agent unlink
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
+      ignore_errors: yes
       when: force_relink
 
-    # ---------------- RHEL 7 ----------------
-    - name: Upload RHEL 7 package as normal user
+    # ---------------- RHEL Packages ----------------
+    - name: Upload RHEL 7 package
       copy:
         src: "el7.rpm"
         dest: "/tmp/el7.rpm"
         mode: '0755'
-      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
 
     - name: Install RHEL 7 package
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S yum -y localinstall /tmp/el7.rpm
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S yum -y localinstall /tmp/el7.rpm
-        {% endif %}
+      shell: yum -y localinstall /tmp/el7.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
 
-    # ---------------- RHEL 8 ----------------
-    - name: Upload RHEL 8 package as normal user
+    - name: Upload RHEL 8 package
       copy:
         src: "el8.rpm"
         dest: "/tmp/el8.rpm"
         mode: '0755'
-      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
 
     - name: Install RHEL 8 package
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S dnf -y localinstall /tmp/el8.rpm
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S dnf -y localinstall /tmp/el8.rpm
-        {% endif %}
+      shell: dnf -y localinstall /tmp/el8.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
 
-    # ---------------- RHEL 9 ----------------
-    - name: Upload RHEL 9 package as normal user
+    - name: Upload RHEL 9 package
       copy:
         src: "el9.rpm"
         dest: "/tmp/el9.rpm"
         mode: '0755'
-      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
 
     - name: Install RHEL 9 package
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S dnf -y localinstall /tmp/el9.rpm
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S dnf -y localinstall /tmp/el9.rpm
-        {% endif %}
+      shell: dnf -y localinstall /tmp/el9.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
 
-    # ---------------- Debian/Ubuntu ----------------
-    - name: Upload Debian/Ubuntu package as normal user
+    # ---------------- Debian/Ubuntu Packages ----------------
+    - name: Upload Debian/Ubuntu package
       copy:
         src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         mode: '0755'
-      become: no
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
     - name: Install Debian/Ubuntu package
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
-        {% endif %}
+      shell: apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
-    # ---------------- Start & Link Nessus Agent ----------------
+    # ---------------- Start & Enable Nessus Agent ----------------
     - name: Enable and start Nessus Agent
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S systemctl enable --now nessusagent
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S systemctl enable --now nessusagent
-        {% endif %}
+      systemd:
+        name: nessusagent
+        state: started
+        enabled: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
 
     - name: Link Nessus Agent
-      shell: |
-        {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
-        {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
-        {% endif %}
+      shell: >
+        /opt/nessus_agent/sbin/nessuscli agent link
+        --key={{ activation_key }}
+        {% if mode == "cloud" %} --cloud {% else %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% endif %}
       args:
         creates: "/opt/nessus_agent/.nessus/agent.key"
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
