@@ -23,7 +23,7 @@
         mode: "0755"
 
     - name: Run Rapid7 remover
-      shell: /bin/bash /tmp/r7remover.sh
+      script: /tmp/r7remover.sh
       become: yes
       become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
       become_flags: "-S -tt"
