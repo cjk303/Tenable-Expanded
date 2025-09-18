@@ -1,158 +1,130 @@
-#!/usr/bin/env python3
-from flask import Flask, render_template, request, Response, redirect, url_for, session, flash
-from ldap3 import Server, Connection, SIMPLE, ALL
-from functools import wraps
-import os, json, tempfile, subprocess, shlex, sys
-from cryptography.fernet import Fernet
+---
+- name: Deploy Nessus Agent
+  hosts: agents
+  gather_facts: no
+  vars:
+    force_relink: true
+    ansible_remote_tmp: /tmp
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key")
+  pre_tasks:
+    - name: Gather minimal OS facts
+      setup:
+        gather_subset:
+          - '!all'
+          - 'min'
 
-LDAP_DOMAIN = "amer.epiqcorp.com"
+  tasks:
 
-# ------------------ LDAP AUTH ------------------ #
-def authenticate_user(username, password):
-    user_principal = f"{username}@{LDAP_DOMAIN}"
-    server = Server(LDAP_DOMAIN, get_info=ALL, port=636, use_ssl=True)
-    try:
-        conn = Connection(server, user=user_principal, password=password,
-                          authentication=SIMPLE, auto_bind=True)
-        conn.unbind()
-        return True
-    except Exception as e:
-        app.logger.warning(f"LDAP auth failed for {user_principal}: {e}")
-        return False
+    # ---------------- Remove Rapid7 ----------------
+    - name: Upload Rapid7 remover
+      copy:
+        src: "r7remover.sh"
+        dest: /tmp/r7remover.sh
+        mode: "0755"
 
-# ------------------ LOGIN REQUIRED ------------------ #
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "username" not in session:
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated
+    - name: Run Rapid7 remover
+      shell: /bin/bash /tmp/r7remover.sh
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      when: remove_rapid7 | bool
 
-# ------------------ ROUTES ------------------ #
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        if authenticate_user(username, password):
-            session["username"] = f"{username}@{LDAP_DOMAIN}"
-            flash("Login successful!", "success")
-            return redirect(url_for("index"))
-        else:
-            flash("Invalid username or password", "danger")
-    return render_template("login.html")
+    # ---------------- Remove existing Nessus token ----------------
+    - name: Remove existing Nessus token if force_relink
+      shell: /opt/nessus_agent/sbin/nessuscli agent unlink
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      ignore_errors: yes
+      when: force_relink
 
-@app.route("/logout")
-def logout():
-    session.pop("username", None)
-    flash("Logged out successfully.", "info")
-    return redirect(url_for("login"))
+    # ---------------- RHEL Packages ----------------
+    - name: Upload RHEL 7 package
+      copy:
+        src: "el7.rpm"
+        dest: "/tmp/el7.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "7"
 
-@app.route("/", methods=["GET", "POST"])
-@login_required
-def index():
-    # Load predefined accounts
-    PREDEFINED_FILE = "predefined_accounts.json"
-    if not os.path.isfile(PREDEFINED_FILE):
-        open(PREDEFINED_FILE, "w").write("{}")
-    with open(PREDEFINED_FILE) as f:
-        try:
-            PREDEFINED_ACCOUNTS = json.load(f)
-        except Exception:
-            PREDEFINED_ACCOUNTS = {}
+    - name: Install RHEL 7 package
+      shell: yum -y localinstall /tmp/el7.rpm
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "7"
 
-    # Load Fernet key
-    KEY_FILE = "fernet.key"
-    if not os.path.isfile(KEY_FILE):
-        raise FileNotFoundError(f"Fernet key file '{KEY_FILE}' not found.")
-    with open(KEY_FILE, "r") as kf:
-        ENCRYPTION_KEY = kf.read().strip()
-    cipher = Fernet(ENCRYPTION_KEY.encode())
+    - name: Upload RHEL 8 package
+      copy:
+        src: "el8.rpm"
+        dest: "/tmp/el8.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "8"
 
-    def decrypt_password(enc_password):
-        return cipher.decrypt(enc_password.encode()).decode()
+    - name: Install RHEL 8 package
+      shell: dnf -y localinstall /tmp/el8.rpm
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "8"
 
-    if request.method == "POST":
-        account_key = request.form.get("predefined_account")
-        use_predefined = bool(account_key and account_key in PREDEFINED_ACCOUNTS)
+    - name: Upload RHEL 9 package
+      copy:
+        src: "el9.rpm"
+        dest: "/tmp/el9.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "9"
 
-        if use_predefined:
-            account = PREDEFINED_ACCOUNTS[account_key]
-            username = account.get("username", "")
-            password = decrypt_password(account.get("password", ""))
-            sudo_password = decrypt_password(account.get("sudo_password", ""))
-            activation_key = account.get("activation_key", "")
-            escalate_method = account.get("escalate_method", "sudo")
-        else:
-            username = request.form.get("username", "").strip()
-            password = request.form.get("password", "").strip()
-            sudo_password = request.form.get("sudo_password", "").strip()
-            activation_key = request.form.get("activation_key", "").strip()
-            escalate_method = request.form.get("escalate_method", "sudo")
-            if not username or not password or not activation_key:
-                return "Error: username, password, and activation key are required.", 400
+    - name: Install RHEL 9 package
+      shell: dnf -y localinstall /tmp/el9.rpm
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "9"
 
-        hosts = [h.strip() for h in request.form.get("hosts", "").splitlines() if h.strip()]
-        if not hosts:
-            return "Error: at least one host is required.", 400
+    # ---------------- Debian/Ubuntu Packages ----------------
+    - name: Upload Debian/Ubuntu package
+      copy:
+        src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        mode: '0755'
+      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
-        groups = request.form.get("groups", "")
-        mode = request.form.get("mode", "cloud")
-        manager_host = request.form.get("manager_host", "")
-        manager_port = request.form.get("manager_port", "8834")
-        remove_rapid7_flag = bool(request.form.get("remove_rapid7"))
+    - name: Install Debian/Ubuntu package
+      shell: apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
+      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
-        # ---------------- Inventory generation ---------------- #
-        inventory_lines = ["[agents]"] + hosts + ["", "[agents:vars]"]
-        def safe(v): return shlex.quote(str(v)) if v else "''"
+    # ---------------- Start & Enable Nessus Agent ----------------
+    - name: Enable and start Nessus Agent
+      systemd:
+        name: nessusagent
+        state: started
+        enabled: yes
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
 
-        inventory_lines += [
-            f"ansible_user={safe(username)}",
-            f"ansible_password={safe(password)}",
-            f"ansible_become_password={safe(sudo_password)}",
-            f"ansible_become_method={escalate_method}",
-            "ansible_become_flags='-S -tt'",
-            f"activation_key={safe(activation_key)}",
-            f"groups={safe(groups)}",
-            f"mode={safe(mode)}",
-            f"manager_host={safe(manager_host)}",
-            f"manager_port={manager_port}",
-            f"remove_rapid7={str(remove_rapid7_flag).lower()}",
-            "ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no'"
-        ]
-
-        inventory_content = "\n".join(inventory_lines) + "\n"
-        tmp_inventory = tempfile.NamedTemporaryFile(delete=False, mode="w")
-        tmp_inventory.write(inventory_content)
-        tmp_inventory.close()
-        os.chmod(tmp_inventory.name, 0o600)
-
-        # ---------------- Stream logs ---------------- #
-        def stream_logs():
-            cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml"]
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            try:
-                for line in iter(process.stdout.readline, ''):
-                    yield f"data:{line.rstrip()}\n\n"
-                    sys.stdout.flush()
-            finally:
-                process.stdout.close()
-                rc = process.wait()
-                yield f"data:PLAYBOOK_EXIT={rc}\n\n"
-                sys.stdout.flush()
-                try:
-                    os.unlink(tmp_inventory.name)
-                except Exception:
-                    app.logger.warning(f"Failed to remove temp inventory {tmp_inventory.name}")
-
-        return Response(stream_logs(), mimetype='text/event-stream')
-
-    return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8443, debug=True)
+    - name: Link Nessus Agent
+      shell: >
+        /opt/nessus_agent/sbin/nessuscli agent link
+        --key={{ activation_key }}
+        {% if mode == "cloud" %} --cloud {% else %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% endif %}
+      args:
+        creates: "/opt/nessus_agent/.nessus/agent.key"
+      become: yes
+      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
+      become_flags: "-S -tt"
