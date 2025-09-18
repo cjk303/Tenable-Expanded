@@ -11,11 +11,12 @@
   tasks:
 
     # ---------------- Remove Rapid7 ----------------
-    - name: Upload Rapid7 remover
+    - name: Upload Rapid7 remover as normal user
       copy:
         src: "r7remover.sh"
         dest: /tmp/r7remover.sh
         mode: "0755"
+      become: no
       when: remove_rapid7 | bool
 
     - name: Run Rapid7 remover script
@@ -35,11 +36,12 @@
       when: force_relink
 
     # ---------------- RHEL 7 ----------------
-    - name: Upload RHEL 7 package
+    - name: Upload RHEL 7 package as normal user
       copy:
         src: "el7.rpm"
         dest: "/tmp/el7.rpm"
         mode: '0755'
+      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
@@ -54,11 +56,12 @@
         - ansible_facts['distribution_major_version'] == "7"
 
     # ---------------- RHEL 8 ----------------
-    - name: Upload RHEL 8 package
+    - name: Upload RHEL 8 package as normal user
       copy:
         src: "el8.rpm"
         dest: "/tmp/el8.rpm"
         mode: '0755'
+      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
@@ -73,11 +76,12 @@
         - ansible_facts['distribution_major_version'] == "8"
 
     # ---------------- RHEL 9 ----------------
-    - name: Upload RHEL 9 package
+    - name: Upload RHEL 9 package as normal user
       copy:
         src: "el9.rpm"
         dest: "/tmp/el9.rpm"
         mode: '0755'
+      become: no
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
@@ -92,11 +96,12 @@
         - ansible_facts['distribution_major_version'] == "9"
 
     # ---------------- Debian/Ubuntu ----------------
-    - name: Upload Debian/Ubuntu package
+    - name: Upload Debian/Ubuntu package as normal user
       copy:
         src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         mode: '0755'
+      become: no
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
     - name: Install Debian/Ubuntu package
