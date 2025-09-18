@@ -5,6 +5,14 @@
   become: yes
   vars:
     force_relink: true
+    ansible_remote_tmp: /opt/ansible/tmp  # <--- force Ansible to use this temp folder
+
+  pre_tasks:
+    - name: Ensure Ansible remote temp directory exists
+      file:
+        path: /opt/ansible/tmp
+        state: directory
+        mode: '1777'
 
   tasks:
 
@@ -109,4 +117,3 @@
         {% endif %}
       args:
         creates: "/opt/nessus_agent/.nessus/agent.key"
-
