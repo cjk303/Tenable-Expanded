@@ -5,15 +5,8 @@
   become: yes
   vars:
     force_relink: true
-    ansible_remote_tmp: /var/tmp/.ansible/tmp
+    ansible_remote_tmp: /tmp
     ansible_become_flags: "-S -tt"
-
-  pre_tasks:
-    - name: Ensure Ansible remote tmp folder exists
-      file:
-        path: /var/tmp/.ansible/tmp
-        state: directory
-        mode: '1777'
 
   tasks:
 
