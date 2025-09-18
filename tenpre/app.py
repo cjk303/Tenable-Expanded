@@ -1,66 +1,4 @@
-#!/usr/bin/env python3
-from flask import (
-    Flask, render_template, request, Response,
-    redirect, url_for, session, flash
-)
-from ldap3 import Server, Connection, SIMPLE, ALL
-from functools import wraps
-import os
-import json
-import tempfile
-import subprocess
-from cryptography.fernet import Fernet
-import shlex
-import sys
-
-app = Flask(__name__)
-
-# 🔑 Secret key for sessions
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key")
-
-LDAP_DOMAIN = "amer.epiqcorp.com"
-
-# ------------------ LDAP AUTH ------------------ #
-def authenticate_user(username, password):
-    user_principal = f"{username}@{LDAP_DOMAIN}"
-    server = Server(LDAP_DOMAIN, get_info=ALL, port=636, use_ssl=True)
-    try:
-        conn = Connection(server, user=user_principal, password=password,
-                          authentication=SIMPLE, auto_bind=True)
-        conn.unbind()
-        return True
-    except Exception as e:
-        app.logger.warning(f"LDAP auth failed for {user_principal}: {e}")
-        return False
-
-# ------------------ LOGIN REQUIRED ------------------ #
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "username" not in session:
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated
-
-# ------------------ ROUTES ------------------ #
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        if authenticate_user(username, password):
-            session["username"] = f"{username}@{LDAP_DOMAIN}"
-            flash("Login successful!", "success")
-            return redirect(url_for("index"))
-        else:
-            flash("Invalid username or password", "danger")
-    return render_template("login.html")
-
-@app.route("/logout")
-def logout():
-    session.pop("username", None)
-    flash("Logged out successfully.", "info")
-    return redirect(url_for("login"))
+import paramiko
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
@@ -117,6 +55,23 @@ def index():
         escalate_method = request.form.get("escalate_method", "sudo")
         remove_rapid7_flag = bool(request.form.get("remove_rapid7"))
 
+        # ----------------- Pre-flight SSH/Sudo check ----------------- #
+        if not use_predefined:
+            for host in hosts:
+                try:
+                    client = paramiko.SSHClient()
+                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    client.connect(hostname=host, username=username, password=password, timeout=5)
+                    # Test sudo escalation
+                    stdin, stdout, stderr = client.exec_command(f"echo {sudo_password} | sudo -S whoami")
+                    result = stdout.read().decode().strip()
+                    err = stderr.read().decode().strip()
+                    client.close()
+                    if result != "root":
+                        return f"Error: sudo test failed on {host}. Check sudo password or privileges.\n{err}", 400
+                except Exception as e:
+                    return f"Error: SSH connection failed to {host}: {str(e)}", 400
+
         # ---------------- Inventory generation ---------------- #
         def safe_value(v):
             if v is None:
@@ -145,21 +100,12 @@ def index():
         inventory_lines.append("ansible_become_flags='-tt'")
 
         inventory_content = "\n".join(inventory_lines) + "\n"
-
-        # ---------------- Write temporary inventory ---------------- #
         tmp_inventory = tempfile.NamedTemporaryFile(delete=False, mode="w")
-        try:
-            tmp_inventory.write(inventory_content)
-            tmp_inventory.close()
-            os.chmod(tmp_inventory.name, 0o600)
-        except Exception:
-            try:
-                os.unlink(tmp_inventory.name)
-            except Exception:
-                pass
-            raise
+        tmp_inventory.write(inventory_content)
+        tmp_inventory.close()
+        os.chmod(tmp_inventory.name, 0o600)
 
-        # ---------------- Log masked inventory ---------------- #
+        # Mask passwords in logs
         masked_inventory = []
         for line in inventory_lines:
             if "password" in line.lower():
@@ -168,7 +114,7 @@ def index():
                 masked_inventory.append(line)
         app.logger.info("Ansible inventory being used:\n%s", "\n".join(masked_inventory))
 
-        # ---------------- Stream logs to browser ---------------- #
+        # ---------------- Stream logs ---------------- #
         def stream_logs():
             cmd = [
                 "ansible-playbook",
@@ -200,7 +146,3 @@ def index():
         return Response(stream_logs(), mimetype='text/event-stream')
 
     return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8443, debug=True)
