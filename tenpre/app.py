@@ -78,7 +78,6 @@ def index():
         return cipher.decrypt(enc_password.encode()).decode()
 
     if request.method == "POST":
-        # Debug: show POST data
         app.logger.info("FORM DATA RECEIVED: %s", request.form.to_dict())
 
         account_key = request.form.get("predefined_account")
@@ -90,12 +89,13 @@ def index():
             password = decrypt_password(account.get("password", ""))
             sudo_password = decrypt_password(account.get("sudo_password", ""))
             activation_key = account.get("activation_key", "")
+            escalate_method = account.get("escalate_method", "sudo")
         else:
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "").strip()
             sudo_password = request.form.get("sudo_password", "").strip()
             activation_key = request.form.get("activation_key", "").strip()
-            # Validate manual fields
+            escalate_method = request.form.get("escalate_method", "sudo")
             if not username or not password or not activation_key:
                 return "Error: username, password, and activation key are required.", 400
 
@@ -107,22 +107,37 @@ def index():
         mode = request.form.get("mode", "cloud")
         manager_host = request.form.get("manager_host", "")
         manager_port = request.form.get("manager_port", "8834")
-        escalate_method = request.form.get("escalate_method", "sudo")
         remove_rapid7_flag = bool(request.form.get("remove_rapid7"))
 
-        # ----------------- Pre-flight SSH/Sudo check ----------------- #
+        # ----------------- Pre-flight SSH/Sudo/dzdo check ----------------- #
         if not use_predefined:
             for host in hosts:
                 try:
                     client = paramiko.SSHClient()
                     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                    client.connect(hostname=host, username=username, password=password, timeout=5)
-                    stdin, stdout, stderr = client.exec_command(f"echo {sudo_password} | sudo -S whoami")
+                    client.connect(
+                        hostname=host,
+                        username=username,
+                        password=password,
+                        timeout=5
+                    )
+
+                    # Determine escalation command
+                    if escalate_method == "sudo":
+                        cmd = f"echo {sudo_password} | sudo -S whoami"
+                    elif escalate_method == "dzdo":
+                        cmd = f"echo {sudo_password} | dzdo -S whoami"
+                    else:
+                        cmd = "whoami"  # fallback
+
+                    stdin, stdout, stderr = client.exec_command(cmd)
                     result = stdout.read().decode().strip()
                     err = stderr.read().decode().strip()
                     client.close()
+
                     if result != "root":
-                        return f"Error: sudo test failed on {host}. Check sudo password or privileges.\n{err}", 400
+                        return f"Error: {escalate_method} test failed on {host}. Check password or privileges.\n{err}", 400
+
                 except Exception as e:
                     return f"Error: SSH connection failed to {host}: {str(e)}", 400
 
