@@ -1,21 +1,23 @@
 ---
 - name: Deploy Nessus Agent
   hosts: agents
-  gather_facts: yes
+  gather_facts: no
   become: yes
   vars:
     force_relink: true
-    ansible_remote_tmp: /opt/ansible/tmp  # <--- force Ansible to use this temp folder
+    ansible_remote_tmp: /var/tmp/.ansible/tmp
+    ansible_become_flags: "-S -tt"
 
   pre_tasks:
-    - name: Ensure Ansible remote temp directory exists
+    - name: Ensure Ansible remote tmp folder exists
       file:
-        path: /opt/ansible/tmp
+        path: /var/tmp/.ansible/tmp
         state: directory
         mode: '1777'
 
   tasks:
 
+    # ---------------- Remove Rapid7 ----------------
     - name: Upload Rapid7 remover
       copy:
         src: "r7remover.sh"
@@ -25,16 +27,18 @@
 
     - name: Run Rapid7 remover script
       command: /bin/bash /tmp/r7remover.sh
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when: remove_rapid7 | bool
 
-    - name: Fail if OS unsupported
-      fail:
-        msg: "Unsupported OS {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
-      when: ansible_facts['distribution'] not in ['RedHat', 'Ubuntu', 'Debian']
-
+    # ---------------- Remove existing Nessus token ----------------
     - name: Remove existing Nessus token if force_relink
       shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
       ignore_errors: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when: force_relink
 
     # ---------------- RHEL 7 ----------------
@@ -47,8 +51,11 @@
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
 
-    - name: Install RHEL 7 package via yum
+    - name: Install RHEL 7 package
       command: yum -y localinstall /tmp/el7.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "7"
@@ -63,8 +70,11 @@
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
 
-    - name: Install RHEL 8 package via dnf
+    - name: Install RHEL 8 package
       command: dnf -y localinstall /tmp/el8.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "8"
@@ -79,8 +89,11 @@
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
 
-    - name: Install RHEL 9 package via dnf
+    - name: Install RHEL 9 package
       command: dnf -y localinstall /tmp/el9.rpm
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when:
         - ansible_facts['distribution'] == "RedHat"
         - ansible_facts['distribution_major_version'] == "9"
@@ -97,6 +110,9 @@
       apt:
         deb: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         state: present
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
     # ---------------- Start & Link Nessus Agent ----------------
@@ -105,6 +121,9 @@
         name: nessusagent
         state: started
         enabled: yes
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
 
     - name: Link Nessus Agent
       shell: >
@@ -117,3 +136,6 @@
         {% endif %}
       args:
         creates: "/opt/nessus_agent/.nessus/agent.key"
+      become: yes
+      become_method: "{{ escalate_method }}"
+      become_flags: "-S -tt"
