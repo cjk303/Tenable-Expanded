@@ -114,37 +114,55 @@ const accountSelect = document.getElementById("predefined_account");
 const manualFields = document.getElementById("manual_credentials");
 
 accountSelect.addEventListener("change", function(){
-    if (this.value) {
-        manualFields.style.display = "none";
-    } else {
-        manualFields.style.display = "block";
-    }
+    manualFields.style.display = this.value ? "none" : "block";
 });
 
 document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
-  logBox.innerHTML="Starting deployment...\n";
+  logBox.innerHTML = "Starting deployment...\n";
+
   const formData = new FormData(this);
-  fetch("/", { method:"POST", body:formData })
-  .then(response=>{
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    function read(){
-      reader.read().then(({done,value})=>{
-        if(done) return;
-        const text = decoder.decode(value);
-        text.split("\n").forEach(line=>{
-          if(line.startsWith("data:")){
-            logBox.innerText += line.replace("data:","") + "\n";
-            logBox.scrollTop = logBox.scrollHeight;
+  fetch("/", { method: "POST", body: formData })
+    .then(response => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            logBox.innerText += "\n--- Stream closed ---\n";
+            return;
           }
+          buffer += decoder.decode(value, { stream: true });
+          let lines = buffer.split("\n");
+          buffer = lines.pop(); // keep incomplete line
+
+          lines.forEach(line => {
+            if (!line.trim()) return;
+            if (line.startsWith("data:")) {
+              const msg = line.slice(5).trim();
+              if (msg.startsWith("PLAYBOOK_EXIT=")) {
+                const rc = msg.split("=")[1];
+                logBox.innerText += `\n[Finished] Exit code: ${rc}\n`;
+              } else {
+                logBox.innerText += msg + "\n";
+              }
+            } else {
+              logBox.innerText += line + "\n";
+            }
+            logBox.scrollTop = logBox.scrollHeight;
+          });
+
+          pump();
         });
-        read();
-      });
-    }
-    read();
-  });
+      }
+      pump();
+    })
+    .catch(err => {
+      logBox.innerText += `\nERROR: ${err.message}\n`;
+    });
 });
 </script>
 </body>
