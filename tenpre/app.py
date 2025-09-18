@@ -28,9 +28,9 @@
     - name: Run Rapid7 remover script with dzdo/sudo
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /bin/bash /tmp/r7remover.sh
+        echo {{ ansible_become_password | quote }} | dzdo -S /bin/bash /tmp/r7remover.sh
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /bin/bash /tmp/r7remover.sh
+        echo {{ ansible_become_password | quote }} | sudo -S /bin/bash /tmp/r7remover.sh
         {% endif %}
       when: remove_rapid7 | bool
 
@@ -38,9 +38,9 @@
     - name: Remove existing Nessus token if force_relink
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
+        echo {{ ansible_become_password | quote }} | dzdo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
+        echo {{ ansible_become_password | quote }} | sudo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
         {% endif %}
       when: force_relink
 
@@ -58,9 +58,9 @@
     - name: Install RHEL 7 package
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S yum -y localinstall /tmp/el7.rpm
+        echo {{ ansible_become_password | quote }} | dzdo -S yum -y localinstall /tmp/el7.rpm
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S yum -y localinstall /tmp/el7.rpm
+        echo {{ ansible_become_password | quote }} | sudo -S yum -y localinstall /tmp/el7.rpm
         {% endif %}
       when:
         - ansible_facts['distribution'] == "RedHat"
@@ -80,9 +80,9 @@
     - name: Install RHEL 8 package
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S dnf -y localinstall /tmp/el8.rpm
+        echo {{ ansible_become_password | quote }} | dzdo -S dnf -y localinstall /tmp/el8.rpm
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S dnf -y localinstall /tmp/el8.rpm
+        echo {{ ansible_become_password | quote }} | sudo -S dnf -y localinstall /tmp/el8.rpm
         {% endif %}
       when:
         - ansible_facts['distribution'] == "RedHat"
@@ -102,9 +102,9 @@
     - name: Install RHEL 9 package
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S dnf -y localinstall /tmp/el9.rpm
+        echo {{ ansible_become_password | quote }} | dzdo -S dnf -y localinstall /tmp/el9.rpm
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S dnf -y localinstall /tmp/el9.rpm
+        echo {{ ansible_become_password | quote }} | sudo -S dnf -y localinstall /tmp/el9.rpm
         {% endif %}
       when:
         - ansible_facts['distribution'] == "RedHat"
@@ -122,9 +122,9 @@
     - name: Install Debian/Ubuntu package
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
+        echo {{ ansible_become_password | quote }} | dzdo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
+        echo {{ ansible_become_password | quote }} | sudo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         {% endif %}
       when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
 
@@ -132,17 +132,17 @@
     - name: Enable and start Nessus Agent
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S systemctl enable --now nessusagent
+        echo {{ ansible_become_password | quote }} | dzdo -S systemctl enable --now nessusagent
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S systemctl enable --now nessusagent
+        echo {{ ansible_become_password | quote }} | sudo -S systemctl enable --now nessusagent
         {% endif %}
 
     - name: Link Nessus Agent
       shell: |
         {% if ansible_become_method == 'dzdo' %}
-        echo "{{ ansible_become_password }}" | dzdo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
+        echo {{ ansible_become_password | quote }} | dzdo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
         {% else %}
-        echo "{{ ansible_become_password }}" | sudo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
+        echo {{ ansible_become_password | quote }} | sudo -S /opt/nessus_agent/sbin/nessuscli agent link --key={{ activation_key }} {% if mode != 'cloud' %} --manager-host={{ manager_host }} --manager-port={{ manager_port }} {% else %} --cloud {% endif %}
         {% endif %}
       args:
         creates: "/opt/nessus_agent/.nessus/agent.key"
