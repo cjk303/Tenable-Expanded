@@ -1,0 +1,112 @@
+---
+- name: Deploy Nessus Agent
+  hosts: agents
+  gather_facts: yes
+  become: yes
+  vars:
+    force_relink: true
+
+  tasks:
+
+    - name: Upload Rapid7 remover
+      copy:
+        src: "r7remover.sh"
+        dest: /tmp/r7remover.sh
+        mode: "0755"
+      when: remove_rapid7 | bool
+
+    - name: Run Rapid7 remover script
+      command: /bin/bash /tmp/r7remover.sh
+      when: remove_rapid7 | bool
+
+    - name: Fail if OS unsupported
+      fail:
+        msg: "Unsupported OS {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+      when: ansible_facts['distribution'] not in ['RedHat', 'Ubuntu', 'Debian']
+
+    - name: Remove existing Nessus token if force_relink
+      shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
+      ignore_errors: yes
+      when: force_relink
+
+    # ---------------- RHEL 7 ----------------
+    - name: Upload RHEL 7 package
+      copy:
+        src: "el7.rpm"
+        dest: "/tmp/el7.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "7"
+
+    - name: Install RHEL 7 package via yum
+      command: yum -y localinstall /tmp/el7.rpm
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "7"
+
+    # ---------------- RHEL 8 ----------------
+    - name: Upload RHEL 8 package
+      copy:
+        src: "el8.rpm"
+        dest: "/tmp/el8.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "8"
+
+    - name: Install RHEL 8 package via dnf
+      command: dnf -y localinstall /tmp/el8.rpm
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "8"
+
+    # ---------------- RHEL 9 ----------------
+    - name: Upload RHEL 9 package
+      copy:
+        src: "el9.rpm"
+        dest: "/tmp/el9.rpm"
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "9"
+
+    - name: Install RHEL 9 package via dnf
+      command: dnf -y localinstall /tmp/el9.rpm
+      when:
+        - ansible_facts['distribution'] == "RedHat"
+        - ansible_facts['distribution_major_version'] == "9"
+
+    # ---------------- Debian/Ubuntu ----------------
+    - name: Upload Debian/Ubuntu package
+      copy:
+        src: "NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        mode: '0755'
+      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+
+    - name: Install Debian/Ubuntu package
+      apt:
+        deb: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
+        state: present
+      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+
+    # ---------------- Start & Link Nessus Agent ----------------
+    - name: Enable and start Nessus Agent
+      service:
+        name: nessusagent
+        state: started
+        enabled: yes
+
+    - name: Link Nessus Agent
+      shell: >
+        /opt/nessus_agent/sbin/nessuscli agent link
+        --key={{ activation_key }}
+        {% if mode == "cloud" %}
+        --cloud
+        {% else %}
+        --manager-host={{ manager_host }} --manager-port={{ manager_port }}
+        {% endif %}
+      args:
+        creates: "/opt/nessus_agent/.nessus/agent.key"
+
