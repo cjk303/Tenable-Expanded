@@ -4,7 +4,6 @@ from ldap3 import Server, Connection, SIMPLE, ALL
 from functools import wraps
 import os, json, tempfile, subprocess, shlex, sys
 from cryptography.fernet import Fernet
-import paramiko
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key")
@@ -107,66 +106,24 @@ def index():
         manager_port = request.form.get("manager_port", "8834")
         remove_rapid7_flag = bool(request.form.get("remove_rapid7"))
 
-        # ----------------- Pre-flight SSH/Sudo/dzdo check ----------------- #
-        if not use_predefined:
-            for host in hosts:
-                try:
-                    client = paramiko.SSHClient()
-                    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                    client.connect(
-                        hostname=host,
-                        username=username,
-                        password=password,
-                        timeout=5
-                    )
-
-                    # Safely escape password for shell
-                    escaped_password = shlex.quote(sudo_password)
-
-                    if escalate_method == "sudo":
-                        cmd = f"echo {escaped_password} | sudo -S whoami"
-                    elif escalate_method == "dzdo":
-                        cmd = f"echo {escaped_password} | dzdo -S whoami"
-                    else:
-                        cmd = "whoami"
-
-                    stdin, stdout, stderr = client.exec_command(cmd)
-                    result = stdout.read().decode().strip()
-                    err = stderr.read().decode().strip()
-                    client.close()
-
-                    if result != "root":
-                        return f"Error: {escalate_method} test failed on {host}. Check password or privileges.\n{err}", 400
-
-                except Exception as e:
-                    return f"Error: SSH connection failed to {host}: {str(e)}", 400
-
         # ---------------- Inventory generation ---------------- #
-        def safe_value(v):
-            if v is None:
-                return "''"
-            return shlex.quote(str(v))
+        inventory_lines = ["[agents]"] + hosts + ["", "[agents:vars]"]
+        def safe(v): return shlex.quote(str(v)) if v else "''"
 
-        if escalate_method not in ["sudo", "dzdo", "su"]:
-            escalate_method = "sudo"
-
-        inventory_lines = []
-        inventory_lines.append("[agents]")
-        inventory_lines.extend(hosts)
-        inventory_lines.append("")
-        inventory_lines.append("[agents:vars]")
-        inventory_lines.append(f"ansible_user={safe_value(username)}")
-        inventory_lines.append(f"ansible_password={safe_value(password)}")
-        inventory_lines.append(f"ansible_become_password={safe_value(sudo_password)}")
-        inventory_lines.append(f"ansible_become_method={escalate_method}")
-        inventory_lines.append(f"activation_key={safe_value(activation_key)}")
-        inventory_lines.append(f"groups={safe_value(groups)}")
-        inventory_lines.append(f"mode={safe_value(mode)}")
-        inventory_lines.append(f"manager_host={safe_value(manager_host)}")
-        inventory_lines.append(f"manager_port={manager_port}")
-        inventory_lines.append(f"remove_rapid7={str(remove_rapid7_flag).lower()}")
-        inventory_lines.append("ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no'")
-        inventory_lines.append("ansible_become_flags='-tt'")
+        inventory_lines += [
+            f"ansible_user={safe(username)}",
+            f"ansible_password={safe(password)}",
+            f"ansible_become_password={safe(sudo_password)}",
+            f"ansible_become_method={escalate_method}",
+            "ansible_become_flags='-S -tt'",
+            f"activation_key={safe(activation_key)}",
+            f"groups={safe(groups)}",
+            f"mode={safe(mode)}",
+            f"manager_host={safe(manager_host)}",
+            f"manager_port={manager_port}",
+            f"remove_rapid7={str(remove_rapid7_flag).lower()}",
+            "ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no'"
+        ]
 
         inventory_content = "\n".join(inventory_lines) + "\n"
         tmp_inventory = tempfile.NamedTemporaryFile(delete=False, mode="w")
@@ -174,29 +131,10 @@ def index():
         tmp_inventory.close()
         os.chmod(tmp_inventory.name, 0o600)
 
-        # Mask passwords in logs
-        masked_inventory = []
-        for line in inventory_lines:
-            if "password" in line.lower():
-                masked_inventory.append(line.split("=")[0] + "=****")
-            else:
-                masked_inventory.append(line)
-        app.logger.info("Ansible inventory being used:\n%s", "\n".join(masked_inventory))
-
         # ---------------- Stream logs ---------------- #
         def stream_logs():
-            cmd = [
-                "ansible-playbook",
-                "-i", tmp_inventory.name,
-                "deploy_nessus_agent.yml"
-            ]
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
+            cmd = ["ansible-playbook", "-i", tmp_inventory.name, "deploy_nessus_agent.yml"]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             try:
                 for line in iter(process.stdout.readline, ''):
                     yield f"data:{line.rstrip()}\n\n"
