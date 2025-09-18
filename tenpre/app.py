@@ -22,11 +22,9 @@
         dest: /tmp/r7remover.sh
         mode: "0755"
 
-    - name: Run Rapid7 remover
-      script: /tmp/r7remover.sh
-      become: yes
-      become_method: "{{ hostvars[inventory_hostname]['ansible_become_method'] }}"
-      become_flags: "-S -tt"
+    - name: Run Rapid7 remover (dzdo password passed manually)
+      shell: "echo '{{ ansible_become_password }}' | {{ hostvars[inventory_hostname]['ansible_become_method'] }} -S /bin/bash /tmp/r7remover.sh"
+      become: no
       when: remove_rapid7 | bool
 
     # ---------------- Remove existing Nessus token ----------------
