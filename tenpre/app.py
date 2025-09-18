@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-from flask import (
-    Flask, render_template, request, Response,
-    redirect, url_for, session, flash
-)
+from flask import Flask, render_template, request, Response, redirect, url_for, session, flash
 from ldap3 import Server, Connection, SIMPLE, ALL
 from functools import wraps
-import os
-import json
-import tempfile
-import subprocess
+import os, json, tempfile, subprocess, shlex, sys
 from cryptography.fernet import Fernet
-import shlex
-import sys
 import paramiko
 
 app = Flask(__name__)
@@ -64,20 +56,20 @@ def logout():
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def index():
+    # Load predefined accounts
     PREDEFINED_FILE = "predefined_accounts.json"
     if not os.path.isfile(PREDEFINED_FILE):
         open(PREDEFINED_FILE, "w").write("{}")
-
     with open(PREDEFINED_FILE) as f:
         try:
             PREDEFINED_ACCOUNTS = json.load(f)
         except Exception:
             PREDEFINED_ACCOUNTS = {}
 
+    # Load Fernet key
     KEY_FILE = "fernet.key"
     if not os.path.isfile(KEY_FILE):
-        raise FileNotFoundError(f"Fernet key file '{KEY_FILE}' not found. Generate it first.")
-
+        raise FileNotFoundError(f"Fernet key file '{KEY_FILE}' not found.")
     with open(KEY_FILE, "r") as kf:
         ENCRYPTION_KEY = kf.read().strip()
     cipher = Fernet(ENCRYPTION_KEY.encode())
@@ -86,6 +78,9 @@ def index():
         return cipher.decrypt(enc_password.encode()).decode()
 
     if request.method == "POST":
+        # Debug: show POST data
+        app.logger.info("FORM DATA RECEIVED: %s", request.form.to_dict())
+
         account_key = request.form.get("predefined_account")
         use_predefined = bool(account_key and account_key in PREDEFINED_ACCOUNTS)
 
@@ -100,12 +95,11 @@ def index():
             password = request.form.get("password", "").strip()
             sudo_password = request.form.get("sudo_password", "").strip()
             activation_key = request.form.get("activation_key", "").strip()
+            # Validate manual fields
+            if not username or not password or not activation_key:
+                return "Error: username, password, and activation key are required.", 400
 
-        if not username or not password or not activation_key:
-            return "Error: username, password, and activation key are required.", 400
-
-        raw_hosts = request.form.get("hosts", "")
-        hosts = [h.strip() for h in raw_hosts.splitlines() if h.strip()]
+        hosts = [h.strip() for h in request.form.get("hosts", "").splitlines() if h.strip()]
         if not hosts:
             return "Error: at least one host is required.", 400
 
@@ -123,7 +117,6 @@ def index():
                     client = paramiko.SSHClient()
                     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                     client.connect(hostname=host, username=username, password=password, timeout=5)
-                    # Test sudo escalation
                     stdin, stdout, stderr = client.exec_command(f"echo {sudo_password} | sudo -S whoami")
                     result = stdout.read().decode().strip()
                     err = stderr.read().decode().strip()
