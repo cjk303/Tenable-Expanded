@@ -1,4 +1,65 @@
+#!/usr/bin/env python3
+from flask import (
+    Flask, render_template, request, Response,
+    redirect, url_for, session, flash
+)
+from ldap3 import Server, Connection, SIMPLE, ALL
+from functools import wraps
+import os
+import json
+import tempfile
+import subprocess
+from cryptography.fernet import Fernet
+import shlex
+import sys
 import paramiko
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key")
+
+LDAP_DOMAIN = "amer.epiqcorp.com"
+
+# ------------------ LDAP AUTH ------------------ #
+def authenticate_user(username, password):
+    user_principal = f"{username}@{LDAP_DOMAIN}"
+    server = Server(LDAP_DOMAIN, get_info=ALL, port=636, use_ssl=True)
+    try:
+        conn = Connection(server, user=user_principal, password=password,
+                          authentication=SIMPLE, auto_bind=True)
+        conn.unbind()
+        return True
+    except Exception as e:
+        app.logger.warning(f"LDAP auth failed for {user_principal}: {e}")
+        return False
+
+# ------------------ LOGIN REQUIRED ------------------ #
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "username" not in session:
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+# ------------------ ROUTES ------------------ #
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if authenticate_user(username, password):
+            session["username"] = f"{username}@{LDAP_DOMAIN}"
+            flash("Login successful!", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("Invalid username or password", "danger")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.pop("username", None)
+    flash("Logged out successfully.", "info")
+    return redirect(url_for("login"))
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
@@ -146,3 +207,7 @@ def index():
         return Response(stream_logs(), mimetype='text/event-stream')
 
     return render_template("index.html", predefined_accounts=PREDEFINED_ACCOUNTS)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8443, debug=True)
