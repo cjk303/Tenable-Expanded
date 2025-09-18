@@ -12,7 +12,7 @@ input,textarea,select {background:#fff; border:1px solid #0C2340; color:#0C2340;
 input:focus,textarea:focus,select:focus {border-color:#0072CE; box-shadow:0 0 5px #0072CE; outline:none;}
 .btn-epiq {background:#0072CE; color:#fff; font-weight:bold; border-radius:0.5rem; transition:0.2s;}
 .btn-epiq:hover {background:#005bb5;}
-#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:400px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE;}
+#logBox {background:#0C2340; color:#0072CE; font-family:monospace; padding:1rem; height:400px; overflow-y:scroll; border-radius:0.5rem; margin-top:20px; border:1px solid #0072CE; white-space: pre-wrap;}
 h2 {color:#0072CE; font-weight:bold; text-align:center; margin-bottom:2rem;}
 .logo-container {display:flex; justify-content:center; align-items:center; gap:2rem; margin-bottom:1rem;}
 .logo-container img {max-height:60px; object-fit:contain;}
@@ -114,55 +114,49 @@ const accountSelect = document.getElementById("predefined_account");
 const manualFields = document.getElementById("manual_credentials");
 
 accountSelect.addEventListener("change", function(){
-    manualFields.style.display = this.value ? "none" : "block";
+    if (this.value) {
+        manualFields.style.display = "none";
+    } else {
+        manualFields.style.display = "block";
+    }
 });
 
 document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
-  logBox.innerHTML = "Starting deployment...\n";
-
+  logBox.innerText = "Starting deployment...\n";
   const formData = new FormData(this);
-  fetch("/", { method: "POST", body: formData })
-    .then(response => {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
 
-      function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            logBox.innerText += "\n--- Stream closed ---\n";
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          let lines = buffer.split("\n");
-          buffer = lines.pop(); // keep incomplete line
-
-          lines.forEach(line => {
-            if (!line.trim()) return;
-            if (line.startsWith("data:")) {
-              const msg = line.slice(5).trim();
-              if (msg.startsWith("PLAYBOOK_EXIT=")) {
-                const rc = msg.split("=")[1];
-                logBox.innerText += `\n[Finished] Exit code: ${rc}\n`;
-              } else {
-                logBox.innerText += msg + "\n";
-              }
-            } else {
-              logBox.innerText += line + "\n";
-            }
+  fetch("/", { method:"POST", body:formData })
+  .then(response => {
+    if (!response.ok) {
+        response.text().then(txt => {
+            logBox.innerText += "ERROR: " + txt + "\n";
             logBox.scrollTop = logBox.scrollHeight;
-          });
-
-          pump();
         });
-      }
-      pump();
-    })
-    .catch(err => {
-      logBox.innerText += `\nERROR: ${err.message}\n`;
-    });
+        return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    function read() {
+        reader.read().then(({done, value}) => {
+            if (done) return;
+            const text = decoder.decode(value);
+            text.split("\n").forEach(line => {
+                if (line.startsWith("data:")) {
+                    logBox.innerText += line.replace("data:", "") + "\n";
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+            });
+            read();
+        });
+    }
+    read();
+  })
+  .catch(err => {
+    logBox.innerText += "Fetch failed: " + err + "\n";
+  });
 });
 </script>
 </body>
