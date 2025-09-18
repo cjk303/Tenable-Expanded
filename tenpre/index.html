@@ -125,6 +125,10 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
   e.preventDefault();
   const logBox = document.getElementById("logBox");
   logBox.innerText = "Starting deployment...\n";
+
+  // Ensure all manual fields are enabled before sending
+  document.querySelectorAll("#manual_credentials input").forEach(input => input.disabled = false);
+
   const formData = new FormData(this);
 
   fetch("/", { method:"POST", body:formData })
@@ -144,7 +148,7 @@ document.getElementById("deployForm").addEventListener("submit", function(e){
             if (done) return;
             const text = decoder.decode(value);
             text.split("\n").forEach(line => {
-                if (line.startsWith("data:")) {
+                if (line.startsWith("data:")){
                     logBox.innerText += line.replace("data:", "") + "\n";
                     logBox.scrollTop = logBox.scrollHeight;
                 }
