@@ -14,6 +14,10 @@
           - '!all'
           - 'min'
 
+    - name: Debug OS facts (optional, can remove later)
+      debug:
+        msg: "Detected OS: {{ ansible_facts.get('distribution') }} {{ ansible_facts.get('distribution_major_version') | default('N/A') }}"
+
   tasks:
 
     # ---------------- Remove Rapid7 ----------------
@@ -23,7 +27,7 @@
         dest: /tmp/r7remover.sh
         mode: "0755"
       become: no
-      when: remove_rapid7 | bool
+      when: remove_rapid7 | default(false) | bool
 
     - name: Run Rapid7 remover script with dzdo/sudo
       shell: |
@@ -32,7 +36,7 @@
         {% else %}
         echo {{ ansible_become_password | quote }} | sudo -S /bin/bash /tmp/r7remover.sh
         {% endif %}
-      when: remove_rapid7 | bool
+      when: remove_rapid7 | default(false) | bool
 
     # ---------------- Remove existing Nessus token ----------------
     - name: Remove existing Nessus token if force_relink
@@ -42,7 +46,7 @@
         {% else %}
         echo {{ ansible_become_password | quote }} | sudo -S /opt/nessus_agent/sbin/nessuscli agent unlink || true
         {% endif %}
-      when: force_relink
+      when: force_relink | bool
 
     # ---------------- RHEL 7 ----------------
     - name: Upload RHEL 7 package as normal user
@@ -52,8 +56,8 @@
         mode: '0755'
       become: no
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "7"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "7"
 
     - name: Install RHEL 7 package
       shell: |
@@ -63,8 +67,8 @@
         echo {{ ansible_become_password | quote }} | sudo -S yum -y localinstall /tmp/el7.rpm
         {% endif %}
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "7"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "7"
 
     # ---------------- RHEL 8 ----------------
     - name: Upload RHEL 8 package as normal user
@@ -74,8 +78,8 @@
         mode: '0755'
       become: no
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "8"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "8"
 
     - name: Install RHEL 8 package
       shell: |
@@ -85,8 +89,8 @@
         echo {{ ansible_become_password | quote }} | sudo -S dnf -y localinstall /tmp/el8.rpm
         {% endif %}
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "8"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "8"
 
     # ---------------- RHEL 9 ----------------
     - name: Upload RHEL 9 package as normal user
@@ -96,8 +100,8 @@
         mode: '0755'
       become: no
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "9"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "9"
 
     - name: Install RHEL 9 package
       shell: |
@@ -107,8 +111,8 @@
         echo {{ ansible_become_password | quote }} | sudo -S dnf -y localinstall /tmp/el9.rpm
         {% endif %}
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "9"
+        - ansible_facts.get('distribution') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "9"
 
     # ---------------- Debian/Ubuntu ----------------
     - name: Upload Debian/Ubuntu package as normal user
@@ -117,7 +121,7 @@
         dest: "/tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb"
         mode: '0755'
       become: no
-      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+      when: ansible_facts.get('distribution') in ['Ubuntu', 'Debian']
 
     - name: Install Debian/Ubuntu package
       shell: |
@@ -126,7 +130,7 @@
         {% else %}
         echo {{ ansible_become_password | quote }} | sudo -S apt-get install -y /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         {% endif %}
-      when: ansible_facts['distribution'] in ['Ubuntu', 'Debian']
+      when: ansible_facts.get('distribution') in ['Ubuntu', 'Debian']
 
     # ---------------- Start & Link Nessus Agent ----------------
     - name: Enable and start Nessus Agent
