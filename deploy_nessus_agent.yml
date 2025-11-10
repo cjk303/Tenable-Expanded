@@ -5,6 +5,8 @@
   become: yes
   vars:
     force_relink: true
+    remove_rapid7: false
+    escalate_method: sudo
 
   tasks:
 
@@ -34,20 +36,19 @@
 
     - name: Set Rapid7 removed status
       set_fact:
-        host_result: "{{ host_result | combine({'removed': 'Yes' if (r7_result is defined and r7_result.rc == 0) else 'No'}) }}"
+        host_result: "{{ host_result | combine({'removed': 'Yes' if (r7_result.rc | default(1) == 0) else 'No'}) }}"
 
     # ---------------- Unsupported OS ----------------
-    - name: Fail if OS unsupported
-      fail:
-        msg: "{{ inventory_hostname }}: Unsupported OS {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
-      when: ansible_facts['distribution'] not in ['RedHat', 'Ubuntu', 'Debian']
+    - name: Skip unsupported OS
+      meta: end_host
+      when: ansible_facts.get('distribution') not in ['RedHat', 'Ubuntu', 'Debian']
 
     # ---------------- Remove existing Nessus token ----------------
     - name: Remove existing Nessus token if force_relink
       shell: "/opt/nessus_agent/sbin/nessuscli agent unlink"
       ignore_errors: yes
       become_method: "{{ escalate_method }}"
-      when: force_relink
+      when: force_relink | bool
 
     # ---------------- RHEL 7 ----------------
     - name: Upload RHEL 7 package
@@ -56,8 +57,8 @@
         dest: /tmp/el7.rpm
         mode: "0755"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "7"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "7"
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 7 package
@@ -68,12 +69,12 @@
       ignore_errors: yes
       become_method: "{{ escalate_method }}"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "7"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "7"
 
     - name: Set RHEL 7 install status
       set_fact:
-        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm_result is defined and rpm_result.rc==0) else 'No'}) }}"
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm_result.rc | default(1) == 0) else 'No'}) }}"
 
     # ---------------- RHEL 8 ----------------
     - name: Upload RHEL 8 package
@@ -82,8 +83,8 @@
         dest: /tmp/el8.rpm
         mode: "0755"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "8"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "8"
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 8 package
@@ -94,12 +95,12 @@
       ignore_errors: yes
       become_method: "{{ escalate_method }}"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "8"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "8"
 
     - name: Set RHEL 8 install status
       set_fact:
-        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm8_result is defined and rpm8_result.rc==0) else 'No'}) }}"
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm8_result.rc | default(1) == 0) else 'No'}) }}"
 
     # ---------------- RHEL 9 ----------------
     - name: Upload RHEL 9 package
@@ -108,8 +109,8 @@
         dest: /tmp/el9.rpm
         mode: "0755"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "9"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "9"
       become_method: "{{ escalate_method }}"
 
     - name: Install RHEL 9 package
@@ -120,12 +121,12 @@
       ignore_errors: yes
       become_method: "{{ escalate_method }}"
       when:
-        - ansible_facts['distribution'] == "RedHat"
-        - ansible_facts['distribution_major_version'] == "9"
+        - ansible_facts.get('os_family') == "RedHat"
+        - ansible_facts.get('distribution_major_version') | string == "9"
 
     - name: Set RHEL 9 install status
       set_fact:
-        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm9_result is defined and rpm9_result.rc==0) else 'No'}) }}"
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (rpm9_result.rc | default(1) == 0) else 'No'}) }}"
 
     # ---------------- Debian / Ubuntu ----------------
     - name: Upload Debian/Ubuntu package
@@ -133,7 +134,7 @@
         src: NessusAgent-10.9.0-ubuntu1604_amd64.deb
         dest: /tmp/NessusAgent-10.9.0-ubuntu1604_amd64.deb
         mode: "0755"
-      when: ansible_facts['distribution'] in ['Ubuntu','Debian']
+      when: ansible_facts.get('distribution') in ['Ubuntu','Debian']
       become_method: "{{ escalate_method }}"
 
     - name: Install Debian/Ubuntu package
@@ -143,11 +144,11 @@
       register: deb_result
       ignore_errors: yes
       become_method: "{{ escalate_method }}"
-      when: ansible_facts['distribution'] in ['Ubuntu','Debian']
+      when: ansible_facts.get('distribution') in ['Ubuntu','Debian']
 
     - name: Set Debian/Ubuntu install status
       set_fact:
-        host_result: "{{ host_result | combine({'installed': 'Yes' if (deb_result is defined and not deb_result.failed) else 'No'}) }}"
+        host_result: "{{ host_result | combine({'installed': 'Yes' if (deb_result is defined and not deb_result.failed | default(true)) else 'No'}) }}"
 
     # ---------------- Start & Link Nessus Agent ----------------
     - name: Enable and start Nessus Agent
@@ -174,9 +175,9 @@
 
     - name: Set final link status
       set_fact:
-        host_result: "{{ host_result | combine({'status': 'Success' if (link_result is defined and link_result.rc==0) else 'Failed'}) }}"
+        host_result: "{{ host_result | combine({'status': 'Success' if (link_result.rc | default(1) == 0) else 'Failed'}) }}"
 
-    # ---------------- Send host result for SSE ----------------
+    # ---------------- Output host result ----------------
     - name: Output host deployment result
       debug:
         msg: "{{ host_result }}"
