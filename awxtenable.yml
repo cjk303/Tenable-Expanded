@@ -31,7 +31,7 @@
     ansible_ssh_user: "{{ pam_user if (pam_source | default('')) == 'survey' else omit }}"
     ansible_ssh_pass: "{{ pam_pass if (pam_source | default('')) == 'survey' else omit }}"
     force_relink: "{{ force_relink | default(true) }}"
-    activation_key: "{{ activation_key | default('cce52193b4282dad82e1884d3dd7d8ec33c923a2fb7a39ac51199108982e5f4c') }}"
+    activation_key: "YOUR_HARDCODED_TENABLE_KEY_HERE"
 
   tasks:
 
